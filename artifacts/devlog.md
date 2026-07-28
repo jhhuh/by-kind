@@ -187,3 +187,62 @@ Depth-3 overrides exist only where the third path component is semantic
 (`applications/networking/browsers` → `web`) rather than a family name. Without
 them `applications/networking` would lump browsers, mail clients and IRC into one
 label — a self-inflicted version of the very noise the project is meant to fix.
+
+---
+
+## 2026-07-28 — Stage ①: acquire
+
+`src/acquire.py` + `tests/test_acquire.py` (14 tests). Output is byte-stable
+across runs. Two earlier "verified facts" turned out to be wrong and are
+corrected here — the earlier entries above are left as written, since this log is
+append-only and the correction trail is the point.
+
+**Correction 1: the package count was 21,575; it is 21,511.**
+`grep -c '/package.nix$'` counted **nested** files — `kicad/addons/package.nix`,
+`navidrome/plugins/*/package.nix`, `micro/tests/*/package.nix`. Only 5-part paths
+(`pkgs/by-name/<shard>/<name>/package.nix`) are by-name entries; nested ones are
+sub-packages called by their parent. 21,576 files, 65 nested, **21,511 packages**.
+
+**Correction 2: channel coverage was 98.8%; a join bug made it 97.9%, and the
+real figure is 99.1%.**
+
+The first real run failed the 98% floor, and the missing list contained
+`abseil-cpp` — which I had *seen* in the channel dump. So it was a bug, not
+staleness. `meta.position` records where a derivation was **defined**, which for
+alias and override packages is a different file than their own directory:
+
+```
+abseil-cpp  position -> pkgs/by-name/ab/abseil-cpp_202601/package.nix   (alias)
+_7zz-rar    position -> pkgs/by-name/_7/_7zz/package.nix                (override)
+```
+
+Joining on path alone cannot see these. Fixed with a second pass on attribute
+name, which recovered **261 packages**: 97.9% → **99.1%**. Each row records
+`matched_by` (`position` | `name`) so the two paths stay auditable.
+
+Two regression tests lock this in — one asserts the bug still reproduces without
+the fallback, so the guard can't silently rot.
+
+**Lesson.** The design doc asserted "`meta.position` identifies which attrs
+originate in by-name" as a *verified fact*. It was verified in aggregate (98.8%
+looked fine) but never on the failure cases. Aggregate coverage hid a systematic
+class of miss. Checking a named example I expected to be present is what caught
+it — worth repeating in later stages rather than trusting a percentage.
+
+**Stage ① output** (`data/packages.jsonl`, 14 MB, 21,511 rows):
+
+```
+channel coverage : 21321/21511 = 99.1%   (position 21060 / name 261)
+with description : 21174/21511 = 98.4%
+with builder fn  : 20736/21511 = 96.4%
+desktop item     :   651/21511 =  3.0%
+missing          :   190
+```
+
+**Note for stage ③.** `desktop_item` fires on only 3.0% of packages. It was
+expected to be the strong `application` vs `cli-tool` discriminator, and 3% is far
+below the plausible share of GUI applications — so it will have high precision but
+low recall. The `gui_toolkit` signal (Qt/GTK/Electron deps) is the likely
+complement and should be checked before concluding the two kinds are separable.
+This directly bears on the taxonomy decision to keep `application` and `cli-tool`
+apart.

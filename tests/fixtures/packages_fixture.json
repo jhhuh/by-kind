@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "packages": {
+    "ripgrep": {
+      "name": "ripgrep-14.1.1",
+      "pname": "ripgrep",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "Utility that combines the usability of The Silver Searcher with the raw speed of grep",
+        "homepage": "https://github.com/BurntSushi/ripgrep",
+        "mainProgram": "rg",
+        "position": "pkgs/by-name/ri/ripgrep/package.nix:71",
+        "license": { "spdxId": "MIT", "shortName": "mit" },
+        "platforms": ["x86_64-linux", "aarch64-linux", "x86_64-darwin"],
+        "unfree": false
+      }
+    },
+    "coreaction": {
+      "name": "coreaction-4.4.0",
+      "pname": "coreaction",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "Side bar for showing widgets from the C Suite",
+        "homepage": "https://gitlab.com/cubocore/coreapps/coreaction",
+        "position": "pkgs/by-name/co/coreaction/package.nix:37",
+        "license": [{ "spdxId": "GPL-3.0-or-later" }],
+        "platforms": ["x86_64-linux"],
+        "unfree": false
+      }
+    },
+    "CuboCore.coreaction": {
+      "name": "coreaction-4.4.0",
+      "pname": "coreaction",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "Side bar for showing widgets from the C Suite",
+        "homepage": "https://gitlab.com/cubocore/coreapps/coreaction",
+        "position": "pkgs/by-name/co/coreaction/package.nix:37",
+        "license": [{ "spdxId": "GPL-3.0-or-later" }],
+        "platforms": ["x86_64-linux"],
+        "unfree": false
+      }
+    },
+    "abseil-cpp": {
+      "name": "abseil-cpp-202601",
+      "pname": "abseil-cpp",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "Open-source collection of C++ code designed to augment the C++ standard library",
+        "homepage": "https://abseil.io/",
+        "position": "pkgs/by-name/ab/abseil-cpp_202601/package.nix:43",
+        "license": [{ "spdxId": "Apache-2.0" }],
+        "platforms": ["x86_64-linux"],
+        "unfree": false
+      }
+    },
+    "legacy-thing": {
+      "name": "legacy-thing-1.0",
+      "pname": "legacy-thing",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "A package that still lives in the legacy tree",
+        "position": "pkgs/applications/misc/legacy-thing/default.nix:12",
+        "license": "unfree",
+        "platforms": ["x86_64-linux"],
+        "unfree": true
+      }
+    },
+    "no-position": {
+      "name": "no-position-1.0",
+      "pname": "no-position",
+      "meta": {
+        "available": true,
+        "broken": false,
+        "description": "A package with no position at all",
+        "license": [],
+        "platforms": []
+      }
+    }
+  }
+}

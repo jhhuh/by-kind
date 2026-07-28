@@ -2,7 +2,7 @@
 
 Reconstruct a browsable **category axis** over `pkgs/by-name/` in nixpkgs.
 
-The `by-name` convention shards 21,575 packages into two-letter directories for
+The `by-name` convention shards 21,511 packages into two-letter directories for
 filesystem scaling. That sharding carries no semantics, and no metadata field
 replaces the category structure the old `pkgs/applications/audio`,
 `pkgs/tools/networking` tree provided — but every package still has a

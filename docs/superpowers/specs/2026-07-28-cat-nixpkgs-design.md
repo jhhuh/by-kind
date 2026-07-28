@@ -5,7 +5,7 @@
 
 ## Problem
 
-The `pkgs/by-name/` convention flattened nixpkgs into a 21,575-entry directory
+The `pkgs/by-name/` convention flattened nixpkgs into a 21,511-entry directory
 sharded by two-letter prefix. The sharding is a filesystem-scaling device and
 carries no semantics, so the category axis that the old `pkgs/applications/audio`,
 `pkgs/tools/networking` tree provided is gone. There is no metadata field that
@@ -42,11 +42,11 @@ Established empirically on 2026-07-28, not assumed:
 
 | Fact | Value |
 |---|---|
-| `package.nix` files at nixpkgs HEAD (`109963f4`) | 21,575 |
+| by-name packages at nixpkgs HEAD | **21,511** (5-part paths). 21,576 files match `*/package.nix`, but 65 are nested sub-packages (`kicad/addons/`, `navidrome/plugins/`) and are not by-name entries. |
 | Channel `packages.json.br` | 10 MB → 394 MB JSON, 0.6 s download |
-| by-name packages present in the channel dump | 21,327 (**98.8%** coverage) |
+| by-name packages present in the channel dump | 21,321 (**99.1%** coverage) — needs a name-fallback join, see stage ① |
 | ...with a non-empty `meta.description` | 99.4% of those |
-| All 21,575 `package.nix` files fetchable locally | 42 MB, 6 s (sparse-checkout on a blobless clone) |
+| All `package.nix` files fetchable locally | 42 MB, 6 s (sparse-checkout on a blobless clone) |
 | Legacy leaf packages usable as labels | 10,696 across 119 categories (10,016 in the 26 categories with ≥40 examples) |
 
 **Feasibility probe** (descriptions only, no structural features, no tuning —
@@ -167,7 +167,7 @@ Six stages, each writing a file the next reads, each independently rerunnable.
 ③ train     legacy-labeled corpus → log-odds weights per (feature, category)
             → model/weights.{domain,kind}.tsv   + held-out metrics
 
-④ classify  deterministic scoring of all 21,575 by-name packages
+④ classify  deterministic scoring of all 21,511 by-name packages
             → data/categories.sqlite
 
 ⑤ improve   LLM error analysis over sampled cases → corrections → back to ③
@@ -245,7 +245,7 @@ Rows record the top contributing features, so any classification can be explaine
 ### ⑤ improve — the LLM loop
 
 The LLM never classifies the corpus. It performs three **sampled** jobs, each
-touching hundreds of packages rather than 21,575:
+touching hundreds of packages rather than 21,511:
 
 1. **Adjudicate low-margin cases.** Labeling where the model is least certain
    yields the most information per label (active learning). Results become new

@@ -1,0 +1,215 @@
+# cat-nixpkgs taxonomy — two orthogonal facets over pkgs/by-name.
+#
+# FROZEN. Changing this file changes classification results, so it is versioned
+# and every edit is a reviewable commit. Bump `version` on any change to a value
+# name; that invalidates trained weights and forces a retrain.
+#
+# `domain` = what a package is ABOUT.  `kind` = what a package IS.
+# They are independent: (audio, application) = Ardour, (audio, cli-tool) = sox,
+# (audio, library) = libsndfile, (audio, plugin) = an LV2 effect.
+#
+# The legacy pkgs/<top>/<sub> tree conflated these axes, which is why it contains
+# both applications/backup and tools/backup. Separating them removes that
+# ambiguity and gives two independent browsing axes.
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# KIND — what the package is. Small, closed, structurally detectable.
+# ---------------------------------------------------------------------------
+kind:
+  application:
+    gloss: End-user program with a graphical or full-screen interactive interface.
+    signals: [makeDesktopItem, copyDesktopItems, qt/gtk dependencies]
+    exemplars: [firefox, gimp, ardour, blender]
+
+  cli-tool:
+    gloss: Command-line program run from a shell, non-interactive or line-oriented.
+    exemplars: [ripgrep, ffmpeg, imagemagick, jq]
+
+  library:
+    gloss: Code consumed by other packages rather than run directly by a user.
+    exemplars: [zlib, libsndfile, openssl, boost]
+
+  server:
+    gloss: Long-running daemon or network service.
+    exemplars: [postgresql, nginx, prometheus, mosquitto]
+
+  data:
+    gloss: Content with no executable logic — fonts, themes, icons, corpora, docs.
+    exemplars: [dejavu-fonts, papirus-icon-theme, hunspell-dictionaries]
+
+  plugin:
+    gloss: Extends a specific host program; not useful standalone.
+    exemplars: [vimPlugins.telescope-nvim, obs-studio-plugins.wlrobs, calf]
+
+  driver:
+    gloss: Hardware enablement — kernel modules, firmware blobs, device support.
+    exemplars: [linux-firmware, nvidia-x11, sane-backends]
+
+  build-support:
+    gloss: nixpkgs build infrastructure — wrappers, setup hooks, builders.
+    exemplars: [cc-wrapper, makeWrapper, autoPatchelfHook]
+
+  other:
+    gloss: >-
+      Does not fit the values above. Its RATE is a taxonomy-quality metric: if
+      more than 10% of packages land here, add a value rather than tuning weights.
+    exemplars: []
+
+# ---------------------------------------------------------------------------
+# DOMAIN — what the package is about.
+# ---------------------------------------------------------------------------
+domain:
+  audio:
+    gloss: Music, sound, audio processing, playback and production.
+    exemplars: [ardour, sox, pulseaudio, mpd]
+  video:
+    gloss: Video playback, editing, encoding, streaming.
+    exemplars: [mpv, kdenlive, obs-studio, handbrake]
+  graphics:
+    gloss: Image editing, 3D modelling, rendering, image viewers.
+    exemplars: [gimp, blender, inkscape, imv]
+  photography:
+    gloss: Photo management, RAW processing, camera tooling.
+    exemplars: [darktable, rawtherapee, digikam]
+
+  text:
+    gloss: Text processing, searching, diffing, markup and document conversion.
+    exemplars: [ripgrep, pandoc, jq, sd]
+  editors:
+    gloss: Text editors, code editors and IDEs, and their extensions.
+    exemplars: [neovim, emacs, vscode, helix]
+  office:
+    gloss: Documents, spreadsheets, presentations, notes, personal information.
+    exemplars: [libreoffice, obsidian, zotero]
+  typesetting:
+    gloss: TeX, publishing, page layout, document typesetting.
+    exemplars: [texlive, lilypond, scribus]
+  fonts:
+    gloss: Font families and font tooling.
+    exemplars: [dejavu-fonts, iosevka, fontforge]
+  themes:
+    gloss: Icon themes, GTK/Qt themes, cursors, wallpapers.
+    exemplars: [papirus-icon-theme, arc-theme, bibata-cursors]
+
+  networking:
+    gloss: Network clients, protocols, transport, VPN, DNS, diagnostics.
+    exemplars: [curl, wireguard-tools, nmap, mtr]
+  web:
+    gloss: Browsers, web servers, web applications and web tooling.
+    exemplars: [firefox, nginx, caddy, lighthouse]
+  email:
+    gloss: Mail clients, mail servers, mail delivery and filtering.
+    exemplars: [thunderbird, postfix, neomutt, dovecot]
+  chat:
+    gloss: Messaging, IRC, matrix, voice and video conferencing.
+    exemplars: [element-desktop, weechat, signal-desktop]
+
+  security:
+    gloss: Cryptography, authentication, secrets, auditing, penetration testing.
+    exemplars: [gnupg, age, sops, wireshark]
+  system:
+    gloss: Operating-system utilities, process and service management, init.
+    exemplars: [systemd, htop, util-linux, procps]
+  hardware:
+    gloss: Device support, firmware, embedded and board-level tooling.
+    exemplars: [linux-firmware, fwupd, lm_sensors]
+  filesystems:
+    gloss: Filesystems, mounting, synchronisation, disk management.
+    exemplars: [btrfs-progs, rclone, gparted, ncdu]
+  backup:
+    gloss: Backup, archival, restore, snapshotting.
+    exemplars: [restic, borgbackup, rsnapshot]
+  compression:
+    gloss: Archivers and compression formats.
+    exemplars: [zstd, p7zip, unrar]
+  printing:
+    gloss: Printers, scanners, print servers, 3D printing.
+    exemplars: [cups, sane-backends, cura]
+
+  database:
+    gloss: Database engines, clients, migration and query tooling.
+    exemplars: [postgresql, sqlite, redis, duckdb]
+  monitoring:
+    gloss: Observability — metrics, logging, tracing, alerting.
+    exemplars: [prometheus, grafana, loki, netdata]
+  cloud:
+    gloss: Cloud platforms, containers, orchestration, infrastructure-as-code.
+    exemplars: [kubectl, terraform, docker-compose, awscli2]
+  virtualization:
+    gloss: Virtual machines, hypervisors, sandboxing.
+    exemplars: [qemu, virt-manager, bubblewrap]
+
+  development:
+    gloss: >-
+      General programming — compilers, interpreters, build systems, debuggers,
+      language tooling, package managers for language ecosystems.
+    exemplars: [gcc, cmake, gdb, uv]
+  vcs:
+    gloss: Version control and code review.
+    exemplars: [git, jujutsu, delta, gh]
+  nix:
+    gloss: The Nix ecosystem itself — Nix tooling, formatters, linters, helpers.
+    exemplars: [nixfmt, nix-tree, nurl, statix]
+
+  science:
+    gloss: Scientific computing and research tooling not covered by a finer value.
+    exemplars: [gnuplot, octave, paraview]
+  math:
+    gloss: Numeric, symbolic and formal mathematics, theorem proving.
+    exemplars: [sage, pari, coq, z3]
+  biology:
+    gloss: Bioinformatics, computational biology, chemistry.
+    exemplars: [samtools, blast, pymol]
+  electronics:
+    gloss: EDA, circuit design, PCB layout, hardware description.
+    exemplars: [kicad, verilator, ngspice]
+  geo:
+    gloss: Geospatial data, GIS, mapping, navigation.
+    exemplars: [qgis, gdal, josm]
+  radio:
+    gloss: Software-defined radio, amateur radio, RF.
+    exemplars: [gnuradio, gqrx, sdrpp]
+
+  games:
+    gloss: Games and game-adjacent tooling.
+    exemplars: [openttd, minetest, prismlauncher]
+  emulators:
+    gloss: Emulators of other systems, consoles and platforms.
+    exemplars: [retroarch, dolphin-emu, wine]
+
+  desktop:
+    gloss: Desktop environments, window managers, compositors, panels, launchers.
+    exemplars: [sway, hyprland, rofi, waybar]
+  terminal:
+    gloss: Terminal emulators, shells, multiplexers and shell tooling.
+    exemplars: [alacritty, fish, tmux, starship]
+
+  finance:
+    gloss: Accounting, budgeting, trading, cryptocurrency.
+    exemplars: [hledger, electrum, gnucash]
+  education:
+    gloss: Learning, teaching, reference and training material.
+    exemplars: [anki, gcompris, stellarium]
+  accessibility:
+    gloss: Assistive technology and accessibility tooling.
+    exemplars: [orca, accerciser, espeak-ng]
+  localization:
+    gloss: Internationalisation, translation, input methods, dictionaries.
+    exemplars: [fcitx5, hunspell, weblate]
+  home-automation:
+    gloss: Home automation, IoT, smart-device integration.
+    exemplars: [home-assistant, esphome, zigbee2mqtt]
+
+  other:
+    gloss: >-
+      Does not fit the values above. Its RATE is a taxonomy-quality metric: if
+      more than 10% of packages land here, add a value rather than tuning weights.
+    exemplars: []
+
+  unclassified:
+    gloss: >-
+      Insufficient signal to place — no description and no usable structural
+      feature. Distinct from `other`, which means "described but does not fit".
+    exemplars: []

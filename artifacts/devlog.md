@@ -114,3 +114,76 @@ text, which is often enough for a `kind` guess. They are scored, not skipped.
 
 **Spec written** to `docs/superpowers/specs/2026-07-28-cat-nixpkgs-design.md` and
 committed. Next: implementation plan, starting from milestone zero.
+
+---
+
+## 2026-07-28 — Milestone zero: taxonomy + two-facet baseline
+
+Authored `data/taxonomy.yaml` (9 kinds, 44 domains) and
+`data/legacy_mapping.yaml`, then measured with `src/measure_baseline.py`.
+Deterministic: three consecutive runs are byte-identical.
+
+**The legacy label corpus is far more skewed than the spec admitted.** Deduped it
+is 10,704 rows over 119 depth-2 paths, but:
+
+| path | rows | share |
+|---|---:|---:|
+| `tools/typesetting` | 4,714 | 44% |
+| `desktops/gnome` | 1,363 | 13% |
+| `development/compilers` | 796 | 7% |
+| `applications/editors` | 473 | 4% |
+| top 4 | 7,346 | **69%** |
+
+Those are TeX packages, GNOME extensions, Chicken eggs and VSCode extensions —
+package *families*, not representative packages. The cause is structural and
+should have been predicted: by-name migration already absorbed the ordinary
+single packages, so what remains in the legacy tree is disproportionately what
+*cannot* easily migrate. Meanwhile the categories that matter for browsing are
+tiny — `applications/audio` 56, `tools/security` 44, `applications/graphics` 18,
+`tools/compression` 4.
+
+Consequence: the earlier 76.3% was substantially "TeX is easy to recognise". So
+the measurement now reports raw **and** family-capped (≤25 rows/family) numbers,
+and the capped one is the baseline.
+
+**Result:**
+
+| facet | run | top-1 | top-3 | confident tier |
+|---|---|---:|---:|---|
+| domain | raw | 75.4% | 83.3% | 53.3% @ 97.8% |
+| kind | raw | 76.9% | 91.5% | 53.3% @ 94.1% |
+| **domain** | **capped** | **71.4%** | **83.1%** | **46.8% @ 95.7%** |
+| **kind** | **capped** | **66.1%** | **86.5%** | **35.3% @ 92.0%** |
+
+**Three findings.**
+
+1. *The two-facet split neither helped nor hurt.* Raw `domain` 75.4% vs the
+   76.3% single-facet probe — within noise. This was flagged during review as an
+   unmeasured assumption that could go either way; it is now measured and closed.
+   Splitting is kept for its browsing value, not for accuracy.
+2. *Family bias cost less than feared* — ~4pp on `domain`, ~11pp on `kind`.
+   Worth having discovered, but not a crisis, and it does **not** force the
+   fallback label strategies sketched in `plan_milestone0.md` step 5.
+3. *`kind` is the weaker facet, predictably.* Descriptions describe what a package
+   **does** (domain), not what form it **takes** (kind). Kind's real signal is
+   structural — builder function, `makeDesktopItem` — deliberately excluded from
+   this baseline. **Recorded prediction: structural features should move `kind`
+   substantially more than `domain`.** If stage ③ shows otherwise, the feature
+   hypothesis is wrong and needs rethinking rather than tuning.
+
+The **confident tier survived capping** at 92–96%. That is the load-bearing
+result: the design premise that the score margin is a calibrated confidence
+signal holds on the harder, more representative sample, not just on the easy
+family-dominated one.
+
+**Design decisions recorded in the taxonomy.** Kept `application` *and* `cli-tool`
+as separate kinds despite having criticised exactly that split in the legacy tree
+— justified because the distinction is now purely "is it interactive/GUI" rather
+than being tangled with domain, *and* because it has a strong structural signal
+(`makeDesktopItem`/`copyDesktopItems`). If stage ③ shows the two are not
+separable in practice, merge them.
+
+Depth-3 overrides exist only where the third path component is semantic
+(`applications/networking/browsers` → `web`) rather than a family name. Without
+them `applications/networking` would lump browsers, mail clients and IRC into one
+label — a self-inflicted version of the very noise the project is meant to fix.

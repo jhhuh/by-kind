@@ -89,6 +89,39 @@ regression gates compare against it. The 76.3% figure justifies building; it doe
 not gate anything, because gating against it would compare two different
 measurements.
 
+**Milestone zero result (2026-07-28, `src/measure_baseline.py`, deterministic).**
+The legacy corpus is dominated by package *families*: `tools/typesetting` alone is
+44% of it and the top four paths are 69%, because by-name migration already
+absorbed the ordinary single packages and left behind what cannot easily migrate.
+Measuring on it unmodified therefore mostly measures "can we recognise TeX". Two
+numbers are reported: `raw` (all 10,704 rows) and `capped` (≤25 rows per family,
+2,842 rows), which approximates the real task.
+
+| facet | run | top-1 | top-3 | confident tier |
+|---|---|---:|---:|---|
+| domain | raw | 75.4% | 83.3% | 53.3% of set @ 97.8% |
+| kind | raw | 76.9% | 91.5% | 53.3% of set @ 94.1% |
+| **domain** | **capped** | **71.4%** | **83.1%** | **46.8% of set @ 95.7%** |
+| **kind** | **capped** | **66.1%** | **86.5%** | **35.3% of set @ 92.0%** |
+
+**The capped row is the project baseline.** Three findings:
+
+1. **The two-facet split neither helped nor hurt.** Raw `domain` is 75.4% against
+   the 76.3% single-facet probe — within noise. The open question from the design
+   is now closed: splitting is safe, and it is kept for its browsing value.
+2. **Family bias costs less than feared** — ~4pp on `domain`, ~11pp on `kind`.
+   The corpus is skewed but the families were not carrying all the signal.
+3. **`kind` is the weaker facet, and predictably so.** Descriptions say what a
+   package *does* (domain), not what form it *takes* (kind). Kind's real signal is
+   structural — builder function, desktop-item calls — which stage ③ adds and this
+   baseline deliberately excludes. **Prediction to test: structural features
+   should move `kind` substantially more than `domain`.** If they do not, that
+   assumption is wrong and the feature set needs rethinking.
+
+Critically, the **confident tier survives capping** at 92–96% accuracy. The design
+premise — that the margin is a calibrated confidence signal — holds on the
+harder, more representative sample.
+
 ## Taxonomy
 
 Two independent facets, distilled from the legacy `pkgs/<top>/<sub>` vocabulary.
@@ -98,9 +131,12 @@ That tree conflates two orthogonal axes — which is why it contains both
 browsing axes.
 
 - **`domain`** — what it is *about*: `audio`, `video`, `graphics`, `networking`,
-  `security`, `science`, `text`, `fonts`, `games`, `system`, … (~30 values)
+  `security`, `science`, `text`, `fonts`, `games`, `system`, … (**44 values**
+  as authored, plus `other` and `unclassified` — more granular than the ~30
+  originally estimated; the `other` rate will show whether that was right)
 - **`kind`** — what it *is*: `application`, `cli-tool`, `library`, `server`,
-  `data`, `plugin`, `build-support` (~7 values)
+  `data`, `plugin`, `driver`, `build-support` (**9 values** as authored,
+  including `other`)
 
 Frozen in a git-tracked `data/taxonomy.yaml`, each value carrying a one-line gloss
 and ≥3 exemplars. Frozen means results are diffable across nixpkgs revisions;
@@ -292,7 +328,7 @@ Each stage has a checkable goal rather than a subjective one.
 |---|---|
 | ① acquire | Unit test on the `meta.position` → by-name-name join against a fixture. Assert coverage ≥98% and that the missing set is reported. |
 | ② taxonomy | Every value has a gloss and ≥3 exemplars; values unique per facet; the legacy-path → facet mapping is total over the observed vocabulary. |
-| ③ train | Held-out top-1, top-3, and per-tier accuracy reported every run. **Regression gate: top-1 must not fall below the two-facet baseline recorded at milestone zero** (not the 76.3% single-facet probe — different measurement, not comparable). Training must be reproducible: fixed seed *and* no reliance on `set`/`dict` iteration order (see devlog 2026-07-28). Per-category precision/recall and a confusion matrix are emitted for the ⑤ loop, with rare categories reported separately so the head does not mask them. |
+| ③ train | Held-out top-1, top-3, and per-tier accuracy reported every run. **Regression gate: family-capped top-1 must not fall below the milestone-zero baseline — `domain` 71.4%, `kind` 66.1%** (not the 76.3% single-facet probe, and not the `raw` figures — different measurements, not comparable). Training must be reproducible: fixed seed *and* no reliance on `set`/`dict` iteration order (see devlog 2026-07-28). Per-category precision/recall and a confusion matrix are emitted for the ⑤ loop, with rare categories reported separately so the head does not mask them. |
 | ④ classify | Determinism test: same inputs + same `model_version` → byte-identical output. Tier calibration asserted (`confident` tier ≥95% on held-out). |
 | ⑤ improve | Each round must improve held-out top-1 or be reverted. Corrections are stored as data, so the round is reproducible. |
 | ⑥ emit | Round-trip sqlite → json → parse preserves row and facet counts. HTML asserted to contain no external `http(s)://` resource reference. |

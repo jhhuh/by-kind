@@ -1,0 +1,225 @@
+# Legacy pkgs/<top>/<sub>[/<sub2>] path -> (domain, kind).
+#
+# This is the label source: packages that have NOT yet migrated to pkgs/by-name/
+# still carry their category in their path. Mapping those paths onto the two
+# facets in taxonomy.yaml turns them into training labels.
+#
+# `domain: null` means the path constrains kind but carries no domain signal
+# (e.g. development/libraries) — such rows train the kind model only.
+#
+# MUST be total over every observed depth-2 path. Verified by tests.
+#
+# depth3 overrides win over depth2. They exist only where the third path
+# component is SEMANTIC (applications/networking/browsers -> web), not where it
+# is a package-family name (applications/editors/vscode is a family, but is
+# overridden anyway because those rows are plugins, not editors).
+
+version: 1
+
+# Not packages — nixpkgs plumbing. Excluded from training entirely.
+exclude:
+  - "top-level"
+  - "stdenv"
+
+depth2:
+  # --- applications -------------------------------------------------------
+  applications/audio:              {domain: audio,          kind: application}
+  applications/video:              {domain: video,          kind: application}
+  applications/graphics:           {domain: graphics,       kind: application}
+  applications/editors:            {domain: editors,        kind: application}
+  applications/office:             {domain: office,         kind: application}
+  applications/networking:         {domain: networking,     kind: application}
+  applications/science:            {domain: science,        kind: application}
+  applications/emulators:          {domain: emulators,      kind: application}
+  applications/virtualization:     {domain: virtualization, kind: application}
+  applications/window-managers:    {domain: desktop,        kind: application}
+  applications/display-managers:   {domain: desktop,        kind: application}
+  applications/terminal-emulators: {domain: terminal,       kind: application}
+  applications/version-management: {domain: vcs,            kind: cli-tool}
+  applications/backup:             {domain: backup,         kind: application}
+  applications/radio:              {domain: radio,          kind: application}
+  applications/gis:                {domain: geo,            kind: application}
+  applications/system:             {domain: system,         kind: application}
+  applications/misc:               {domain: null,           kind: application}
+
+  # --- tools --------------------------------------------------------------
+  tools/typesetting:        {domain: typesetting,  kind: cli-tool}
+  tools/text:               {domain: text,         kind: cli-tool}
+  tools/networking:         {domain: networking,   kind: cli-tool}
+  tools/security:           {domain: security,     kind: cli-tool}
+  tools/system:             {domain: system,       kind: cli-tool}
+  tools/filesystems:        {domain: filesystems,  kind: cli-tool}
+  tools/compression:        {domain: compression,  kind: cli-tool}
+  tools/backup:             {domain: backup,       kind: cli-tool}
+  tools/package-management: {domain: development,  kind: cli-tool}
+  tools/games:              {domain: games,        kind: cli-tool}
+  tools/inputmethods:       {domain: localization, kind: application}
+  tools/misc:               {domain: null,         kind: cli-tool}
+
+  # --- servers ------------------------------------------------------------
+  servers/sql:            {domain: database,        kind: server}
+  servers/nosql:          {domain: database,        kind: server}
+  servers/search:         {domain: database,        kind: server}
+  servers/hbase:          {domain: database,        kind: server}
+  servers/firebird:       {domain: database,        kind: server}
+  servers/vinyl-cache:    {domain: database,        kind: server}
+  servers/apache-kafka:   {domain: database,        kind: server}
+  servers/http:           {domain: web,             kind: server}
+  servers/varnish:        {domain: web,             kind: server}
+  servers/web-apps:       {domain: web,             kind: server}
+  servers/nextcloud:      {domain: web,             kind: server}
+  servers/mail:           {domain: email,           kind: server}
+  servers/roundcube:      {domain: email,           kind: server}
+  servers/rainloop:       {domain: email,           kind: server}
+  servers/monitoring:     {domain: monitoring,      kind: server}
+  servers/icingaweb2:     {domain: monitoring,      kind: server}
+  servers/home-assistant: {domain: home-automation, kind: server}
+  servers/klipper:        {domain: printing,        kind: server}
+  servers/samba:          {domain: filesystems,     kind: server}
+  servers/kanidm:         {domain: security,        kind: server}
+  servers/asterisk:       {domain: networking,      kind: server}
+  servers/dict:           {domain: text,            kind: server}
+  servers/mir:            {domain: desktop,         kind: library}
+
+  # --- development --------------------------------------------------------
+  development/compilers:          {domain: development, kind: cli-tool}
+  development/interpreters:       {domain: development, kind: cli-tool}
+  development/tools:              {domain: development, kind: cli-tool}
+  development/web:                {domain: web,         kind: cli-tool}
+  development/mobile:             {domain: development, kind: cli-tool}
+  development/misc:               {domain: development, kind: cli-tool}
+  development/libraries:          {domain: null,        kind: library}
+  development/hare-third-party:   {domain: null,        kind: library}
+  development/factor-vocabs:      {domain: null,        kind: library}
+  development/emilua-plugins:     {domain: null,        kind: plugin}
+
+  # --- desktops / kde -----------------------------------------------------
+  desktops/gnome:         {domain: desktop, kind: application}
+  desktops/gnome-2:       {domain: desktop, kind: application}
+  desktops/pantheon:      {domain: desktop, kind: application}
+  desktops/lxqt:          {domain: desktop, kind: application}
+  desktops/lomiri:        {domain: desktop, kind: application}
+  desktops/enlightenment: {domain: desktop, kind: application}
+  desktops/lumina:        {domain: desktop, kind: application}
+  desktops/expidus:       {domain: desktop, kind: application}
+  kde/gear:               {domain: desktop, kind: application}
+  kde/plasma:             {domain: desktop, kind: application}
+  kde/misc:               {domain: desktop, kind: application}
+  kde/third-party:        {domain: desktop, kind: application}
+  kde/frameworks:         {domain: null,    kind: library}
+  kde/lib:                {domain: null,    kind: library}
+
+  # --- os-specific --------------------------------------------------------
+  os-specific/linux:   {domain: hardware, kind: driver}
+  os-specific/darwin:  {domain: system,   kind: cli-tool}
+  os-specific/windows: {domain: system,   kind: library}
+  os-specific/cygwin:  {domain: system,   kind: library}
+
+  # --- data / shells / games / misc --------------------------------------
+  data/fonts:    {domain: fonts,  kind: data}
+  data/themes:   {domain: themes, kind: data}
+  data/sgml+xml: {domain: text,   kind: data}
+  data/misc:     {domain: null,   kind: data}
+
+  shells/fish: {domain: terminal, kind: cli-tool}
+  shells/bash: {domain: terminal, kind: cli-tool}
+
+  games/openra_2019:     {domain: games, kind: application}
+  games/quake2:          {domain: games, kind: application}
+  games/quake3:          {domain: games, kind: application}
+  games/fteqw:           {domain: games, kind: application}
+  games/dwarf-fortress:  {domain: games, kind: application}
+  games/cataclysm-dda:   {domain: games, kind: application}
+  games/xonotic:         {domain: games, kind: application}
+  games/vessel:          {domain: games, kind: application}
+  games/papermc:         {domain: games, kind: server}
+
+  misc/cups:                     {domain: printing,     kind: driver}
+  misc/uboot:                    {domain: hardware,     kind: driver}
+  misc/barebox:                  {domain: hardware,     kind: driver}
+  misc/optee-os:                 {domain: hardware,     kind: driver}
+  misc/arm-trusted-firmware:     {domain: hardware,     kind: driver}
+  misc/tmux-plugins:             {domain: terminal,     kind: plugin}
+  misc/lilypond:                 {domain: typesetting,  kind: plugin}
+  misc/logging:                  {domain: monitoring,   kind: cli-tool}
+  misc/translatelocally-models:  {domain: localization, kind: data}
+  misc/documentation-highlighter: {domain: text,        kind: data}
+
+  # --- build-support ------------------------------------------------------
+  build-support/setup-hooks:        {domain: null, kind: build-support}
+  build-support/cc-wrapper:         {domain: null, kind: build-support}
+  build-support/bintools-wrapper:   {domain: null, kind: build-support}
+  build-support/pkg-config-wrapper: {domain: null, kind: build-support}
+  build-support/trivial-builders:   {domain: null, kind: build-support}
+  build-support/node:               {domain: null, kind: build-support}
+  build-support/rust:               {domain: null, kind: build-support}
+  build-support/docker:             {domain: null, kind: build-support}
+  build-support/kernel:             {domain: null, kind: build-support}
+  build-support/teleport:           {domain: null, kind: build-support}
+  build-support/wasm-bindgen-cli:   {domain: null, kind: build-support}
+
+# ---------------------------------------------------------------------------
+# depth3 overrides — only where the 3rd component carries real meaning, or
+# where the family's members are a different KIND than the parent implies.
+# ---------------------------------------------------------------------------
+depth3:
+  # applications/networking is the worst offender at depth 2: it lumps browsers,
+  # mail clients and IRC together. This is why depth-3 overrides exist at all.
+  applications/networking/browsers:           {domain: web,         kind: application}
+  applications/networking/feedreaders:        {domain: web,         kind: application}
+  applications/networking/newsreaders:        {domain: web,         kind: application}
+  applications/networking/mailreaders:        {domain: email,       kind: application}
+  applications/networking/instant-messengers: {domain: chat,        kind: application}
+  applications/networking/irc:                {domain: chat,        kind: application}
+  applications/networking/cluster:            {domain: cloud,       kind: cli-tool}
+  applications/networking/sync:               {domain: filesystems, kind: cli-tool}
+  applications/networking/p2p:                {domain: networking,  kind: application}
+  applications/networking/remote:             {domain: networking,  kind: application}
+
+  applications/science/logic:                 {domain: math,        kind: cli-tool}
+  applications/science/math:                  {domain: math,        kind: application}
+  applications/science/electronics:           {domain: electronics, kind: application}
+  applications/science/biology:               {domain: biology,     kind: cli-tool}
+  applications/science/chemistry:             {domain: biology,     kind: application}
+  applications/science/astronomy:             {domain: science,     kind: application}
+  applications/science/physics:               {domain: science,     kind: cli-tool}
+  applications/science/machine-learning:      {domain: science,     kind: application}
+  applications/science/computer-architecture: {domain: science,     kind: cli-tool}
+  applications/science/robotics:              {domain: science,     kind: application}
+  applications/science/networking:            {domain: science,     kind: application}
+  applications/science/misc:                  {domain: science,     kind: application}
+
+  # families whose members are plugins/extensions, not instances of the parent
+  applications/editors/vscode:            {domain: editors,         kind: plugin}
+  applications/editors/vim:               {domain: editors,         kind: plugin}
+  applications/editors/eclipse:           {domain: editors,         kind: plugin}
+  applications/video/kodi:                {domain: video,           kind: plugin}
+  applications/video/obs-studio:          {domain: video,           kind: plugin}
+  applications/audio/mopidy:              {domain: audio,           kind: plugin}
+  applications/emulators/libretro:        {domain: emulators,       kind: plugin}
+  applications/emulators/wine:            {domain: emulators,       kind: application}
+  desktops/gnome/extensions:              {domain: desktop,         kind: plugin}
+  desktops/pantheon/apps:                 {domain: desktop,         kind: application}
+  shells/fish/plugins:                    {domain: terminal,        kind: plugin}
+  servers/home-assistant/custom-components: {domain: home-automation, kind: plugin}
+  servers/monitoring/grafana:             {domain: monitoring,      kind: plugin}
+  servers/sql/postgresql:                 {domain: database,        kind: plugin}
+  tools/typesetting/tex:                  {domain: typesetting,     kind: plugin}
+  misc/cups/drivers:                      {domain: printing,        kind: driver}
+
+  # families whose members are libraries despite a cli-tool parent
+  development/compilers/chicken:          {domain: development,  kind: library}
+  tools/package-management/akku:          {domain: development,  kind: library}
+  development/libraries/science:          {domain: science,      kind: library}
+  development/libraries/aspell:           {domain: localization, kind: data}
+  development/libraries/hyphen:           {domain: localization, kind: data}
+  tools/text/nltk-data:                   {domain: text,         kind: data}
+
+  # hardware specifics
+  os-specific/linux/kernel:      {domain: hardware,    kind: driver}
+  os-specific/linux/nvidia-x11:  {domain: hardware,    kind: driver}
+  os-specific/linux/zfs:         {domain: filesystems, kind: driver}
+  os-specific/darwin/xcode:      {domain: development, kind: cli-tool}
+
+  development/tools/godot:       {domain: games,       kind: cli-tool}
+  tools/games/minecraft:         {domain: games,       kind: cli-tool}

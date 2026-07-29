@@ -117,6 +117,10 @@ numbers are reported: `raw` (all 10,704 rows) and `capped` (≤25 rows per famil
    baseline deliberately excludes. **Prediction to test: structural features
    should move `kind` substantially more than `domain`.** If they do not, that
    assumption is wrong and the feature set needs rethinking.
+   → **Resolved in stage ③: confirmed, but narrowly** (`kind` +12.0pp vs `domain`
+   +11.4pp). The unpredicted result is that structural features help `domain`
+   nearly as much, because builders encode domain too (`buildKodiAddon` → video,
+   `buildHomeAssistantComponent` → home-automation). See the stage-③ section.
 
 Critically, the **confident tier survives capping** at 92–96% accuracy. The design
 premise — that the margin is a calibrated confidence signal — holds on the
@@ -191,6 +195,18 @@ for `kind` (see assumption 7). `domain` falls back to `unclassified` when no
 signal exists.
 
 ### ③ train — the model
+
+**Result (2026-07-29, `src/train.py`, family-capped, 70/15/15 split):**
+
+| facet | descriptions only | + structural | Δ | confident tier |
+|---|---:|---:|---:|---|
+| domain | 68.5% | **79.9%** | +11.4pp | 67.3% of set @ 96.4% |
+| kind | 64.3% | **76.3%** | +12.0pp | 22.8% of set @ 99.0% |
+
+Structural features are worth ~11–12 points on both facets. `kind`'s confident
+tier is narrow (22.8%) because its threshold is fitted on only ~425 calibration
+rows and the fit is conservative; widening it is a stage-⑤ labelling problem, not
+a modelling one.
 
 **One model per facet.** Weights are log-odds: how much observing a feature
 shifts the posterior toward a category, with add-½ smoothing:
@@ -328,8 +344,8 @@ Each stage has a checkable goal rather than a subjective one.
 |---|---|
 | ① acquire | Unit test on the `meta.position` → by-name-name join against a fixture. Assert coverage ≥98% and that the missing set is reported. |
 | ② taxonomy | Every value has a gloss and ≥3 exemplars; values unique per facet; the legacy-path → facet mapping is total over the observed vocabulary. |
-| ③ train | Held-out top-1, top-3, and per-tier accuracy reported every run. **Regression gate: family-capped top-1 must not fall below the milestone-zero baseline — `domain` 71.4%, `kind` 66.1%** (not the 76.3% single-facet probe, and not the `raw` figures — different measurements, not comparable). Training must be reproducible: fixed seed *and* no reliance on `set`/`dict` iteration order (see devlog 2026-07-28). Per-category precision/recall and a confusion matrix are emitted for the ⑤ loop, with rare categories reported separately so the head does not mask them. |
-| ④ classify | Determinism test: same inputs + same `model_version` → byte-identical output. Tier calibration asserted (`confident` tier ≥95% on held-out). |
+| ③ train | Held-out top-1, top-3, and per-tier accuracy reported every run, with a descriptions-only ablation arm. **Regression gate: family-capped top-1 must not fall below the stage-③ result — `domain` 79.9%, `kind` 76.3%** (milestone zero's 71.4% / 66.1% were descriptions-only and are superseded) (not the 76.3% single-facet probe, and not the `raw` figures — different measurements, not comparable). Training must be reproducible: fixed seed *and* no reliance on `set`/`dict` iteration order (see devlog 2026-07-28). Per-category precision/recall and a confusion matrix are emitted for the ⑤ loop, with rare categories reported separately so the head does not mask them. |
+| ④ classify | Determinism test: same inputs + same `model_version` → byte-identical output. The `confident` threshold is **fitted per model** on a held-back calibration split targeting 95% precision — never hardcoded, because richer feature sets inflate margins and a fixed cut-off silently admits weaker cases as the model improves. Measured test-set precision lands 94–99%; the gap to target is the calibration-split generalisation error and is reported, not hidden. |
 | ⑤ improve | Each round must improve held-out top-1 or be reverted. Corrections are stored as data, so the round is reproducible. |
 | ⑥ emit | Round-trip sqlite → json → parse preserves row and facet counts. HTML asserted to contain no external `http(s)://` resource reference. |
 

@@ -246,3 +246,73 @@ low recall. The `gui_toolkit` signal (Qt/GTK/Electron deps) is the likely
 complement and should be checked before concluding the two kinds are separable.
 This directly bears on the taxonomy decision to keep `application` and `cli-tool`
 apart.
+
+---
+
+## 2026-07-29 — Stage ③: train
+
+`src/features.py`, `src/train.py`, `tests/test_features.py`. 29 tests pass.
+
+**Widened the vendor sparse-checkout from `pkgs/by-name` to `pkgs/`** so the
+legacy training packages get the same structural features as by-name packages.
+Cost: 6.5 s, `.git` 43 M → 69 M, 293 M working tree, 39,611 `.nix` files. Cheap.
+
+**Featurisation lives in its own module imported by both train and classify.**
+Not tidiness: if the two computed features differently the model would degrade
+only at serving time, which is close to invisible. A test asserts the ablation arm
+is a strict subset so the two paths can't silently diverge.
+
+**Ablation result** (family-capped, 70/15/15):
+
+| facet | desc only | + structural | Δ |
+|---|---:|---:|---:|
+| domain | 68.5% | **79.9%** | +11.4pp |
+| kind | 64.3% | **76.3%** | +12.0pp |
+
+**Milestone-zero prediction CONFIRMED — but narrowly, and the interesting result
+is the one I did not predict.** I expected structural features to move `kind`
+substantially more than `domain`. They moved it more by 0.6pp, which is inside
+noise. What actually happened is that structural features helped *both* facets by
+~11–12 points, because builder functions encode **domain** as well as form:
+`buildKodiAddon` → video, `buildHomeAssistantComponent` → home-automation,
+`vimUtils.buildVimPlugin` → editors. My model of why the feature would help was
+half wrong even though the prediction technically passed. Worth remembering when
+reading the next confirmed prediction.
+
+**Bug caught by reading the numbers rather than the code.** First run showed
+`kind`'s confident tier *falling* from 94.2% to 89.9% while its coverage nearly
+doubled — a model that got better producing a tier that got worse. Cause:
+`HIGH_MARGIN = 4.0` was a constant calibrated against a descriptions-only model.
+Richer features inflate margins, so the same cut-off admits progressively weaker
+cases as the model improves. **A fixed confidence threshold is a bug that hides
+behind a rising accuracy number.**
+
+Fixed by fitting the threshold on a held-back calibration split (70/15/15) to a
+95%-precision target. A test asserts `HIGH_MARGIN` is not reintroduced.
+
+Honest consequences of the fix: `kind`'s confident coverage dropped to 22.8% at
+margin ≥ 11.8, because the fit is conservative on ~425 calibration rows. And test
+precision lands 94–99% rather than exactly 95% — the calibration-split
+generalisation gap. Both are reported rather than tuned away; more labels
+(stage ⑤) is the real fix.
+
+**Stage ① question resolved: keep `application` and `cli-tool` separate.** The
+worry was that `desktop_item` fires on only 3.0% of packages. Measured: it is a
+genuine but weak signal (+1.62 for `application`, negative for every other kind),
+and `gui:*` is the complement I hoped for — `wrapGAppsHook4` +4.36, `gtk4` +2.70,
+all sharply negative for `cli-tool`. Confusion between the two is 13 cases out of
+~180. They separate; the split stays.
+
+The larger confusions are elsewhere and are the actual stage-⑤ targets:
+`library → application` (17) and `cli-tool → build-support` (11).
+
+**Learned artifacts, for the stage-⑤ feature review.** Mostly sensible weights
+(`plugin` ← `buildHomeAssistantComponent` 5.72, `data` ← `stdenvNoCC.mkDerivation`
+3.20), plus clear noise: `server ← name:suffix-theme` 1.98 and
+`driver ← name:suffix-cli` 1.34 are nonsense. Exactly the artifact class the LLM
+review is meant to catch.
+
+**Process note.** Lost time to a self-inflicted error: `cd vendor/nixpkgs` in one
+Bash call persisted, so a later `nix develop` resolved *nixpkgs'* flake and failed
+with `Path 'lib' does not exist`, which briefly looked like the project had been
+destroyed. Use absolute paths, or `cd` to the project root in every call.

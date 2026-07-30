@@ -409,3 +409,70 @@ Do not ship the `domain` column as-is, and disable the `confident` tier for
 "LLM error analysis" to **"LLM bootstraps in-distribution labels"** — plan step
 5a, which was written as a contingency and is now the critical path. `kind` can
 ship today.
+
+---
+
+## 2026-07-30 — Stage ⑤: pipeline built, blocked on credentials
+
+Two results, one negative and important.
+
+### Negative result: no modelling change rescues `domain`
+
+Before writing any labelling code I tested whether stage ④'s collapse was really
+a label problem or just prior shift. The misses concentrated on `development` and
+`desktop` — the two largest training priors — which looked like a classic
+prior-shift signature, and prior shift is fixable for free.
+
+`src/experiment_prior.py` sweeps shrinkage {0, 2, 5, 20} × prior {trained,
+uniform} and scores the gold set:
+
+| facet | best trained-prior | best uniform-prior |
+|---|---:|---:|
+| domain | 16.1% | 15.1% |
+| kind | 71.0% | 43.0% |
+
+**My hypothesis was wrong.** Domain sits at 10.8–16.1% across the entire sweep;
+nothing recovers it. The vocabulary genuinely does not transfer. Conversely
+`kind`'s trained prior is strongly informative (71.0% vs 43.0% uniform), so
+removing the prior — the obvious "fix" — would have made `kind` much worse.
+
+This is worth the experiment's cost: it eliminates the whole class of modelling
+fixes and confirms new labels are the only path. Without it I would probably have
+spent another stage tuning.
+
+### Attempted and abandoned: mining git history for migration renames
+
+Packages that moved into by-name were renamed from a legacy path, so history
+holds *true* in-distribution labels — better than LLM output, and needing no
+credentials. Abandoned on cost: nixpkgs accrues ~1000 commits/day, so reaching
+the 2023–24 migration window means ~900k commits. A `--shallow-since=2023-01-01
+--filter=blob:none` fetch timed out at 10 minutes; a background
+`--shallow-since=2024-01-01` returned exit 0 without deepening at all (still 1
+commit). Worth revisiting with a full clone on a machine with time and disk, but
+it is not a cheap win.
+
+### Built: `src/label.py`, verified offline
+
+Enum-constrained structured output against the taxonomy, batches of 50, resumable
+JSONL cache, shard-stratified sampling. Verified end-to-end with a `--dry-run`
+backend: batching, resume (second run finds 0 to do), and **gold-set exclusion**
+(0 leaked of 94).
+
+The leakage guard matters more than it looks: labelling the evaluation set would
+produce a large apparent accuracy gain that means nothing.
+
+**The cache check caught a real cost bug.** The system prompt was ~1,653 tokens,
+below Haiku 4.5's 4,096-token minimum cacheable prefix — so prompt caching would
+have silently not applied across ~40 calls, at roughly 5× the input cost, with no
+error and `cache_creation_input_tokens: 0` as the only symptom. Fixed by adding
+141 few-shot examples generated from the legacy corpus (gold excluded), which
+also improves label quality: now ~4,989 tokens. A test pins it.
+
+### Blocked
+
+No credentials in this environment: no `ANTHROPIC_API_KEY`, no `ant` profile, no
+ollama. `https://api.anthropic.com` returns 401, so connectivity is fine and only
+auth is missing. The labelling run itself is one command once a key exists.
+
+Estimated cost for 2,000 packages: ~40 calls, ~5k cached system tokens each,
+~$0.10–0.30 on Haiku 4.5.

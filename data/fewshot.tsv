@@ -1,0 +1,142 @@
+# name	description	domain	kind   (from the legacy tree; gold set excluded)
+Csu	Common startup stubs for Darwin	system	cli-tool
+OVMF	Sample UEFI firmware for QEMU and KVM	virtualization	application
+activitywatch	Best free and open-source automated time tracker	office	application
+alarmo	Alarm System for Home Assistant	home-automation	plugin
+apfs	APFS module for linux	hardware	driver
+arrow	Better dates & times for Python	video	plugin
+asymptote	2D and 3D TeX-Aware Vector Graphics Language	typesetting	plugin
+autocomplete-all-the-things	urxvt plugin allowing user to easily complete arbitrary text	terminal	application
+autosort	autosort automatically keeps your buffers sorted and grouped by server	chat	application
+b2sum	BLAKE2 cryptographic hash function	security	cli-tool
+babelfish	Translate bash scripts to fish	terminal	cli-tool
+baloo-widgets	Widgets for Baloo	desktop	application
+bc-soci	Database access library for C++. Belledonne Communications' fork for Linphone	chat	application
+bean-add	Beancount transaction entry assistant	office	application
+bimp	Batch Image Manipulation Plugin for GIMP	graphics	application
+blitzortung	Custom Component for fetching lightning data from blitzortung.org	home-automation	plugin
+bootstrap_cmds	Contains mig command for generating headers from definitions	system	cli-tool
+brave-origin	Privacy-oriented browser for Desktop and Laptop computers (Origin variant)	web	application
+bzip2	High-quality data compression program	compression	cli-tool
+calico-apiserver	Cloud native networking and network security	cloud	cli-tool
+check_interfaces	Icinga check plugin for network hardware interfaces	monitoring	server
+client	Client of szurubooru, an image board engine for small and medium communities	web	server
+cmark	A chicken wrapper for cmark with markdown to sxml capabilities	development	library
+coccinelle	Program to apply semantic patches to C code	development	cli-tool
+color-theme	Plugin to switch color themes conveniently and without side effects	editors	plugin
+colorize_nicks	Use the weechat nick colors in the chat area	chat	application
+condensed-NL-unhinted	Iosevka configuration mimicking Berkeley Mono, Condensed width, NL variant, unhinted	fonts	data
+cplex	Optimization solver for mathematical programming	math	application
+daddy-time-mono	Nerd Fonts: A monospaced font for programmers and other terminal groupies	fonts	data
+dfhack	Opinionated wrapper for Dwarf Fortress	games	application
+discord	All-in-one cross-platform voice and text chat for gamers	chat	application
+discourse	Open source discussion platform	web	server
+display	Display diagnostic application for BitScope	electronics	application
+docker-sbom	Plugin for Docker CLI to support SBOM creation using Syft	virtualization	application
+easycrypt-runtest	Testing program for EasyCrypt formalizations	math	cli-tool
+el-en-tiny	TranslateLocally model - Greek-English tiny	localization	data
+farbfeld	Gimp plug-in for the farbfeld image format	graphics	application
+filelight	Quickly visualize your disk space usage	desktop	application
+fossil	Simple, high-reliability, distributed software configuration management	vcs	cli-tool
+fourier	GIMP plug-in to do the fourier transform	graphics	application
+freeoffice	Office suite with a word processor, spreadsheet and presentation program	office	application
+garage	S3-compatible object store for small self-hosted geo-distributed deployments	filesystems	cli-tool
+geda	Full GPL'd suite of Electronic Design Automation tools	electronics	application
+genesis-plus-gx	Enhanced Genesis Plus libretro port	emulators	plugin
+git-abbr	Abbreviations for git for the fish shell 🐟	terminal	plugin
+glsurf	Program to draw implicit surfaces and curves	math	application
+gnuradio	Software Defined Radio (SDR) software	radio	application
+godot3	Free and Open Source 2D and 3D game engine (X11 tools)	games	cli-tool
+grafana-oncall-app	Developer-friendly incident response for Grafana	monitoring	plugin
+gromacs	Molecular dynamics software package	science	application
+gzip	GNU zip compression program	compression	cli-tool
+hbase	Distributed, scalable, big data store	database	server
+helm-diff	Helm plugin that shows a diff	cloud	cli-tool
+helm-s3	Helm plugin that allows to set up a chart repository using AWS S3	cloud	cli-tool
+homeassistant-stubs	Typing stubs for Home Assistant Core	home-automation	server
+hr-hr	Hyphen dictionary for Croatian from LibreOffice	localization	data
+hyperkitty	Archiver for GNU Mailman v3	email	server
+indi-full	Implementation of the INDI protocol for POSIX operating systems	science	library
+is-en-tiny	TranslateLocally model - Icelandic-English tiny	localization	data
+joystick	Binary addon for raw joystick input	video	plugin
+keybase-gui	Keybase official GUI	security	cli-tool
+klipper	Klipper 3D printer firmware	printing	server
+klipper-firmware	Firmware part of Klipper	printing	server
+kzipmix	Tool that aggressively optimizes the sizes of Zip archives	compression	cli-tool
+latex-utilities	Add-on to the Visual Studio Code extension LaTeX Workshop	editors	plugin
+libbtree	Multitran lib: library for reading Multitran's BTREE database format	text	cli-tool
+libksysguard	Library to retrieve information on the current status of computer hardware	desktop	application
+libresolv	Libresolv implementation for Darwin	system	cli-tool
+lilyjazz	lilyjazz font for LilyPond	typesetting	plugin
+linux-gpib	Support package for GPIB (IEEE 488) hardware	electronics	application
+m32edit	Editor for the Midas M32 digital mixer	audio	application
+mdcat	cat for markdown	text	cli-tool
+minc_tools	Command-line utilities for working with MINC files	biology	cli-tool
+monotone	Free distributed version control system	vcs	cli-tool
+mopidy-scrobbler	Mopidy extension for scrobbling played tracks to Last.fm	audio	plugin
+mtutils	Multitran: simple command line utilities for dictionary maintenance	text	cli-tool
+multitrandata	Multitran data english-russian	text	cli-tool
+network_cmds	Network commands for Darwin	system	cli-tool
+nix-eval-jobs	Hydra's builtin hydra-eval-jobs as a standalone	development	cli-tool
+nixops-vbox	NixOps plugin for VirtualBox VMs	cloud	cli-tool
+nl-nl	Hyphen dictionary for Dutch from LibreOffice	localization	data
+ocp-indent	Customizable tool to indent OCaml code	development	cli-tool
+openbsd_snmp3_check	SNMP v3 check for OpenBSD systems state monitoring	monitoring	server
+openmvs	Open Multi-View Stereo reconstruction library	science	application
+openpaperwork-gtk	Reusable GTK components of Paperwork	office	application
+opensnitch-ebpf	eBPF process monitor module for OpenSnitch	hardware	driver
+openssh	Implementation of the SSH protocol	networking	cli-tool
+openssh_hpn	Implementation of the SSH protocol with high performance networking patches	networking	cli-tool
+openvpn	Robust and highly flexible tunneling application	networking	cli-tool
+orbit	LV2 time event manipulation plugin bundle	audio	application
+osdnRelease	M+ Outline Fonts (legacy OSDN release)	fonts	data
+osmc-skin	Default skin for OSMC	video	plugin
+pass	Password-store browser using fzf in tmux	terminal	plugin
+pass-import	Pass extension for importing data from existing password managers	security	cli-tool
+percona-xtrabackup	Non-blocking backup tool for MySQL	backup	cli-tool
+pg_graphql	GraphQL support for PostgreSQL	database	plugin
+plant	Alternative Plant component of home assistant	home-automation	plugin
+plasmatube	Kirigami YouTube video player based on QtMultimedia and youtube-dl	desktop	application
+pluginUtils	Some simple utility lv2 plugins	audio	application
+privmsg	ZNC privmsg module	networking	application
+profondo	profondo font for LilyPond	typesetting	plugin
+proto	Demonstrative prototype oscilloscope built using the BitScope Library	electronics	application
+puae	Amiga emulator based on WinUAE	emulators	plugin
+qgis	Free and Open Source Geographic Information System	geo	application
+quake3arenadata	Quake 3 Arena content	games	application
+quantum-espresso	Electronic-structure calculations and materials modeling at the nanoscale	biology	application
+rainloop-community	Simple, modern & fast web-based email client	email	server
+resynthesizer	Suite of gimp plugins for texture synthesis	graphics	application
+rocq-core	Rocq Prover	math	cli-tool
+roo-cline	AI-powered autonomous coding agent that lives in your editor	editors	plugin
+rtl-sdr	Software to turn the RTL2832U into a SDR receiver	radio	application
+rust-out-of-tree-module	Basic template for an out-of-tree Linux kernel module written in Rust	hardware	driver
+rust-rover	Rust IDE from JetBrains	editors	application
+samba	Standard Windows interoperability suite of programs for Linux and Unix	filesystems	server
+samsung-unified-linux-driver	Samsung's Linux printing drivers; includes binaries without source code	printing	driver
+samsung-unified-linux-driver_1_00_37	Unified Linux Driver for Samsung printers and scanners	printing	driver
+search-guard	Elasticsearch plugin that offers encryption, authentication, and authorisation	database	server
+sierra-breeze-enhanced	OSX-like window decoration for KDE Plasma written in C++	themes	data
+simple-dftd3	Reimplementation of the DFT-D3 program	science	library
+smlar	Compute similary of any one-dimensional arrays	database	plugin
+snes9x2010	Optimized port/rewrite of SNES9x 1.52+ to Libretro	emulators	plugin
+sslscan	Tests SSL/TLS services and discover supported cipher suites	security	cli-tool
+sublime-merge	Git client from the makers of Sublime Text	vcs	cli-tool
+svn-all-fast-export	Fast-import based converter for an svn repo to git repos	vcs	cli-tool
+tabstackengine	"Tabbing" front-end to stackengine	typesetting	plugin
+tamil-classical	Free and open source fonts for Indian languages (Classical Tamil)	fonts	data
+thunderbird	Full-featured e-mail client	email	application
+thunderbird	Full-featured e-mail client	web	application
+thunderbird-esr-bin-unwrapped	Mozilla Thunderbird, a full-featured email client (binary package)	email	application
+timeshift	System restore tool for Linux	backup	application
+timeshift-minimal	System restore tool for Linux (without runtime dependencies)	backup	application
+tt-kmd	Tenstorrent Kernel Module	hardware	driver
+vessel	Fluid physics based puzzle game	games	application
+virtualbox	PC emulator	virtualization	application
+virtualboxGuestAdditions	Guest additions for VirtualBox	virtualization	application
+visualization-fishbmc	FishBMC visualization for kodi	video	plugin
+web	Enterprise-class open source distributed monitoring solution (web frontend)	monitoring	server
+winetricks	Script to install DLLs needed to work around problems in Wine	emulators	application
+zfs	ZFS Filesystem Linux Userspace Tools	filesystems	driver
+zfs_2_3	ZFS Filesystem Linux Kernel Module	filesystems	driver
+zstd	Zstandard real-time compression algorithm	compression	cli-tool

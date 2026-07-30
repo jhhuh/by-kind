@@ -132,7 +132,8 @@ JQ_FILTER = r"""
     attr: .key,
     position: .value.meta.position,
     description: (.value.meta.description // null),
-    homepage: (.value.meta.homepage // null),
+    homepage: ([.value.meta.homepage] | flatten
+               | map(select(type == "string")) | first // null),
     main_program: (.value.meta.mainProgram // null),
     broken: (.value.meta.broken // false),
     unfree: (.value.meta.unfree // false),

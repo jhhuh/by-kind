@@ -316,3 +316,96 @@ review is meant to catch.
 Bash call persisted, so a later `nix develop` resolved *nixpkgs'* flake and failed
 with `Path 'lib' does not exist`, which briefly looked like the project had been
 destroyed. Use absolute paths, or `cd` to the project root in every call.
+
+---
+
+## 2026-07-30 — Stage ④: classify, and the finding that invalidates the domain model
+
+`src/classify.py`, `src/eval_gold.py`, `tests/fixtures/gold_by_name.tsv`,
+`tests/test_classify.py`. 41 tests pass; `data/categories.sqlite` is
+byte-identical across runs. **But the domain classifier is not usable, and the
+confidence tier is actively harmful.** Details below, worst first.
+
+### The headline: measured on by-name, domain accuracy is 13.8%
+
+Built a 94-package hand-labelled gold set drawn from `pkgs/by-name` itself —
+the first and only measurement this project has taken on its actual target
+population. Everything before it was measured on the legacy tree.
+
+| metric | legacy held-out | **by-name gold** |
+|---|---:|---:|
+| domain top-1 | 75.1% | **13.8%** |
+| domain top-3 | 85.0% | 22.3% |
+| kind top-1 | 71.6% | **71.3%** |
+| `confident` tier precision | 95.0% | **0.0%** (0 of 12) |
+
+Three conclusions:
+
+1. **`kind` transfers essentially perfectly** (71.6% → 71.3%). Its signal is
+   structural — builder functions, desktop items, GUI toolkits — and those are
+   properties of how a package is *built*, which does not depend on which tree it
+   lives in. The `kind` model is genuinely usable today.
+2. **`domain` does not transfer at all.** A 61-point gap. Domain is learned from
+   description vocabulary, and the legacy corpus's vocabulary is GNOME extensions,
+   TeX packages and Chicken eggs. It has almost nothing to say about `nmap`.
+   Predictions collapse onto the two largest training priors: `development` (24
+   misses) and `desktop` (24 misses).
+3. **The confidence tier is worse than useless out-of-distribution: 0 of 12.**
+   `anki` → desktop and `bat` → editors were both marked `confident`. A margin
+   threshold fitted on legacy carries no meaning on by-name. This is the most
+   dangerous failure, because it does not look like a failure — it looks like an
+   answer with a quality badge attached.
+
+**The gold set is deliberately easier than average** (well-known packages with
+undisputed categories), so 13.8% is an *upper* bound. That makes it worse, not
+better.
+
+### What this says about the whole approach
+
+The design's premise was: legacy paths label ~10k packages, so train on those.
+That premise holds for `kind` and fails for `domain`. Every warning sign was
+recorded and I under-weighted each one — the corpus skew at milestone zero (69%
+in four paths), the note that labels are "noisy AND biased", the observation that
+by-name migration already absorbed the ordinary single packages. The bias was not
+a few points of noise; for `domain` it is the whole signal.
+
+The measurement that would have caught it earlier is exactly the one built last:
+a hand-labelled sample of the target population. **~90 rows and an hour of
+labelling would have redirected three stages of work.** Build the
+in-distribution measurement before optimising against a proxy, not after.
+
+### Two bugs fixed along the way
+
+**Tiny-class collapse.** First real run put 4,903 packages (23%) into
+`build-support`, which had 35 training rows; `printing` (23 rows) took 2,276.
+Cause: log-odds weights fitted on ~30 examples are unstable, and scoring sums
+only PRESENT features, so a tiny class accumulates score without ever being
+penalised for what it lacks. Micro-averaged held-out accuracy cannot see this —
+the tiny class is tiny in the test split too, so its errors barely move top-1.
+Fixed with evidence shrinkage `w *= support/(support+5)`; build-support went
+4,903 → 27. Added macro-recall and a worst-over-prediction ratio to the training
+report, and a predicted-vs-training-share skew table to classify, so the symptom
+is visible next time. Honest cost: legacy top-1 fell 79.9% → 75.1% for domain and
+76.3% → 71.6% for kind. **Those earlier numbers were inflated by the very
+overfitting the metric could not see.**
+
+**One list-valued `meta.homepage`** — exactly one package in 21,444 — crashed the
+entire stage at the sqlite bind. Normalised in the jq filter and made the sink
+defensive. A single malformed row should never be able to take down a batch.
+
+### Also fixed
+
+- `write_weights` pruned `|w| < 0.5` when saving, so the persisted model was not
+  the measured model — train/serve skew that would have shown up as unexplained
+  accuracy loss and nowhere else. Now saves unpruned (456 KB total).
+- The milestone-zero prediction check reported CONFIRMED on a 0.0pp gap. It now
+  reports INCONCLUSIVE inside ±2pp, and with shrinkage the honest verdict is
+  INCONCLUSIVE (domain +4.2%, kind +4.2%).
+
+### Recommendation
+
+Do not ship the `domain` column as-is, and disable the `confident` tier for
+`domain` until it is recalibrated on in-distribution data. Stage ⑤ changes from
+"LLM error analysis" to **"LLM bootstraps in-distribution labels"** — plan step
+5a, which was written as a contingency and is now the critical path. `kind` can
+ship today.

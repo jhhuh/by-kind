@@ -42,7 +42,9 @@ MODULE_SET = re.compile(r"(-modules|-packages)")
 SEED = 0
 MIN_DF = 5
 MIN_EXAMPLES = 20
-TARGET_PRECISION = 0.95   # the `confident` tier's promise
+SHRINK = 5.0   # evidence-based damping; see train_weights
+TARGET_CONFIDENT = 0.95   # the `confident` tier's promise
+TARGET_PROBABLE = 0.80    # the `probable` tier's promise
 FAMILY_CAP = 25
 
 # Every legacy attribute with a position, plus the meta fields features.py wants.
@@ -54,7 +56,8 @@ JQ_FILTER = r"""
     attr: .key,
     position: .value.meta.position,
     description: (.value.meta.description // null),
-    homepage: (.value.meta.homepage // null),
+    homepage: ([.value.meta.homepage] | flatten
+               | map(select(type == "string")) | first // null),
     main_program: (.value.meta.mainProgram // null),
     license: ([.value.meta.license] | flatten
               | map(if type=="object" then (.spdxId // .shortName // empty)
@@ -170,11 +173,21 @@ def train_weights(train_rows: list[tuple[str, set[str]]]):
     weights = defaultdict(dict)
     for category in n_c:
         for token in vocab:
-            a = df_c[category][token] + 0.5
-            b = n_c[category] - df_c[category][token] + 0.5
-            x = df[token] - df_c[category][token] + 0.5
-            y = (total - n_c[category]) - (df[token] - df_c[category][token]) + 0.5
-            weights[category][token] = math.log((a / b) / (x / y))
+            support = df_c[category][token]
+            a = support + 0.5
+            b = n_c[category] - support + 0.5
+            x = df[token] - support + 0.5
+            y = (total - n_c[category]) - (df[token] - support) + 0.5
+            raw = math.log((a / b) / (x / y))
+            # Shrink toward zero by how much evidence actually backs this
+            # (category, feature) pair. Without it a category with ~35 training
+            # rows gets large, noisy weights and -- because scoring only sums
+            # PRESENT features, never penalising absent ones -- accumulates
+            # enough score to swallow thousands of packages at inference.
+            # Micro-averaged held-out accuracy cannot see this: the tiny class
+            # is tiny in the test split too. Caught only by running stage 4 and
+            # looking at the output distribution.
+            weights[category][token] = raw * (support / (support + SHRINK))
     prior = {c: math.log(n_c[c] / total) for c in n_c}
     return weights, prior, vocab
 
@@ -214,52 +227,82 @@ def evaluate(rows: list[dict], facet: str, use_structural: bool):
         )
         return ranked[0][0], ranked[0][1] - ranked[1][1], [c for c, _ in ranked[:3]]
 
-    # Fit the smallest margin whose held-back precision still meets the target.
+    # Fit the smallest margin whose held-back precision still meets each target.
     graded = sorted(((score(t)[1], score(t)[0] == c) for c, t in calib),
                     key=lambda kv: -kv[0])
-    threshold, hits_so_far = float("inf"), 0
-    for i, (margin, correct) in enumerate(graded, start=1):
-        hits_so_far += correct
-        if hits_so_far / i >= TARGET_PRECISION:
-            threshold = margin
-    if threshold == float("inf"):
-        threshold = graded[0][0] if graded else 0.0
+
+    def fit(target: float) -> float:
+        cut, hits_so_far = float("inf"), 0
+        for i, (margin, correct) in enumerate(graded, start=1):
+            hits_so_far += correct
+            if hits_so_far / i >= target:
+                cut = margin
+        if cut == float("inf"):
+            cut = graded[0][0] if graded else 0.0
+        return cut
+
+    threshold = fit(TARGET_CONFIDENT)
+    threshold_probable = min(fit(TARGET_PROBABLE), threshold)
 
     hits = top3 = conf_n = conf_hits = 0
+    per_class_hits, per_class_n, predicted = Counter(), Counter(), Counter()
     for category, tokens in test:
         pred, margin, best3 = score(tokens)
         hits += pred == category
         top3 += category in best3
+        per_class_n[category] += 1
+        per_class_hits[category] += pred == category
+        predicted[pred] += 1
         if margin >= threshold:
             conf_n += 1
             conf_hits += pred == category
+
+    # Macro recall weights every category equally, so a tiny class collapsing is
+    # visible instead of being averaged away by the head of the distribution.
+    macro = (sum(per_class_hits[c] / per_class_n[c] for c in per_class_n)
+             / len(per_class_n)) if per_class_n else 0.0
+    # Over-prediction ratio: how much more often a category is predicted than it
+    # truly occurs. The direct symptom of the tiny-class failure mode.
+    worst_ratio, worst_cat = 0.0, None
+    for c in per_class_n:
+        ratio = predicted[c] / per_class_n[c]
+        if ratio > worst_ratio:
+            worst_ratio, worst_cat = ratio, c
 
     return {
         "rows": len(data), "categories": len(keep), "held_out": len(test),
         "top1": hits / len(test), "top3": top3 / len(test),
         "conf_cov": conf_n / len(test),
         "conf_acc": conf_hits / conf_n if conf_n else 0.0,
-        "threshold": threshold,
+        "macro_recall": macro,
+        "worst_overprediction": worst_ratio, "worst_overpredicted": worst_cat,
+        "threshold": threshold, "threshold_probable": threshold_probable,
+        "vocab_set": vocab,
         "vocab": len(vocab), "weights": weights, "prior": prior,
     }
 
 
-def write_weights(result: dict, facet: str) -> Path:
-    """Human-readable, diffable, git-tracked. Reviewing a model diff is the point."""
+def write_model(result: dict, facet: str) -> Path:
+    """Persist EXACTLY the model that was measured.
+
+    No pruning. An earlier version dropped |w| < 0.5 when writing, which meant
+    the saved artifact differed from the evaluated one -- train/serve skew that
+    would show up as unexplained accuracy loss in stage 4 and nowhere else.
+    Fidelity beats file size.
+
+    TSV because reviewing a model diff is the point; JSON sidecar for the scalars
+    a classifier needs to load (thresholds, vocabulary).
+    """
     MODEL_DIR.mkdir(exist_ok=True)
     path = MODEL_DIR / f"weights.{facet}.tsv"
     with path.open("w") as fh:
-        fh.write(f"# confident-tier margin threshold: {result['threshold']:.4f}\n")
-        fh.write(f"# fitted for >={TARGET_PRECISION:.0%} precision on a held-back split\n")
-        fh.write("# category\tfeature\tweight\n")
+        fh.write("# category\tfeature\tweight   (see model.json for thresholds)\n")
         for category in sorted(result["prior"]):
             fh.write(f"{category}\t__PRIOR__\t{result['prior'][category]:.6f}\n")
         for category in sorted(result["weights"]):
             row = result["weights"][category]
-            for token in sorted(row, key=lambda t: (-row[t], t)):
-                if abs(row[t := token]) < 0.5:   # prune near-zero noise
-                    continue
-                fh.write(f"{category}\t{token}\t{row[token]:.4f}\n")
+            for token in sorted(row):
+                fh.write(f"{category}\t{token}\t{row[token]:.6f}\n")
     return path
 
 
@@ -267,10 +310,10 @@ def report(label: str, result: dict | None) -> None:
     if result is None:
         print(f"  {label:<34} insufficient data")
         return
-    print(f"  {label:<34} top-1 {result['top1']:6.1%}  top-3 {result['top3']:6.1%}  "
-          f"confident {result['conf_cov']:5.1%} @ {result['conf_acc']:6.1%} "
-          f"(margin≥{result['threshold']:.1f})  "
-          f"[{result['rows']} rows, {result['categories']} cat, {result['vocab']} feat]")
+    print(f"  {label:<34} top-1 {result['top1']:6.1%}  macro-recall {result['macro_recall']:6.1%}  "
+          f"top-3 {result['top3']:6.1%}  confident {result['conf_cov']:5.1%} @ {result['conf_acc']:6.1%}  "
+          f"[worst over-prediction: {result['worst_overpredicted']} "
+          f"{result['worst_overprediction']:.1f}x]")
 
 
 def main() -> None:
@@ -285,7 +328,7 @@ def main() -> None:
     print(f"corpus: {len(rows)} rows ({len(capped)} capped at {args.cap}/family, "
           f"{len({r['family'] for r in rows})} families)\n")
 
-    deltas = {}
+    deltas, saved = {}, {}
     for run_label, subset in (("RAW", rows), ("CAPPED (baseline)", capped)):
         print(f"{run_label}:")
         for facet in ("domain", "kind"):
@@ -298,13 +341,40 @@ def main() -> None:
                 print(f"  {'':<34} Δ top-1 {delta:+.1%}")
                 if run_label.startswith("CAPPED"):
                     deltas[facet] = delta
-                    write_weights(with_, facet)
+                    saved[facet] = with_
         print()
+
+    # Ship the family-capped model: the raw corpus is 69% package families, and a
+    # model fitted to that over-predicts typesetting and desktop on by-name.
+    import datetime as _dt
+    meta = {"taxonomy_version": _taxonomy.get("version"),
+            "mapping_version": mapping.get("version"),
+            "corpus": "family-capped", "family_cap": args.cap,
+            "target_confident": TARGET_CONFIDENT, "target_probable": TARGET_PROBABLE,
+            "facets": {}}
+    for facet, res in saved.items():
+        write_model(res, facet)
+        meta["facets"][facet] = {
+            "threshold_confident": res["threshold"],
+            "threshold_probable": res["threshold_probable"],
+            "vocab": sorted(res["vocab_set"]),
+            "held_out_top1": res["top1"], "held_out_top3": res["top3"],
+            "held_out_confident_coverage": res["conf_cov"],
+            "held_out_confident_precision": res["conf_acc"],
+            "categories": sorted(res["prior"]),
+            "training_share": {c: math.exp(v) for c, v in res["prior"].items()},
+            "train_rows": res["rows"],
+        }
+    (MODEL_DIR / "model.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
+    print(f"wrote model/ ({', '.join(sorted(saved))})\n")
 
     if len(deltas) == 2:
         print("PREDICTION CHECK (milestone zero): structural features should move "
               "`kind` more than `domain`.")
-        verdict = "CONFIRMED" if deltas["kind"] > deltas["domain"] else "NOT CONFIRMED"
+        gap = deltas["kind"] - deltas["domain"]
+        verdict = ("CONFIRMED" if gap > 0.02 else
+                   "NOT CONFIRMED" if gap < -0.02 else
+                   "INCONCLUSIVE (gap within noise)")
         print(f"  domain {deltas['domain']:+.1%}   kind {deltas['kind']:+.1%}   -> {verdict}")
 
 

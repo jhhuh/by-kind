@@ -126,7 +126,7 @@ def test_threshold_is_fitted_not_hardcoded():
     """Regression guard: a fixed cut-off silently admits weaker cases as the
     feature set grows. train.py must not reintroduce a HIGH_MARGIN constant."""
     assert not hasattr(train, "HIGH_MARGIN")
-    assert hasattr(train, "TARGET_PRECISION")
+    assert hasattr(train, "TARGET_CONFIDENT") and hasattr(train, "TARGET_PROBABLE")
 
     result = train.evaluate(_synthetic(), "kind", use_structural=False)
     assert result is not None

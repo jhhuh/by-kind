@@ -1,0 +1,108 @@
+# Hand-labelled gold set drawn from pkgs/by-name — the ONLY measurement this
+# project has on its actual target population. Every other number in the repo is
+# measured on the legacy tree, whose distribution differs sharply.
+#
+# Selection bias, stated plainly: these are well-known packages chosen because
+# their category is not in doubt. That makes them EASIER than average, so scores
+# here are an upper bound, not an estimate of corpus-wide accuracy.
+#
+# Judgment calls: TUI programs (lazygit, btop, ncdu) are labelled by the taxonomy
+# gloss "graphical or full-screen interactive interface", which puts full-screen
+# TUIs under `application`. Reasonable people would say cli-tool. Where a label is
+# genuinely arguable the row is marked with a trailing "?" comment.
+#
+# name<TAB>domain<TAB>kind
+age	security	cli-tool
+alacritty	terminal	application
+anki	education	application
+ardour	audio	application
+audacity	audio	application
+bat	text	cli-tool
+blender	graphics	application
+borgbackup	backup	cli-tool
+btop	system	application	# ? full-screen TUI
+btrfs-progs	filesystems	cli-tool
+caddy	web	server
+cmake	development	cli-tool
+cups	printing	server
+darktable	photography	application
+deadnix	nix	cli-tool
+delta	vcs	cli-tool
+difftastic	vcs	cli-tool
+direnv	terminal	cli-tool
+dolphin-emu	emulators	application
+duckdb	database	cli-tool
+duf	filesystems	cli-tool
+dust	filesystems	cli-tool
+element-desktop	chat	application
+eza	filesystems	cli-tool
+fd	filesystems	cli-tool
+fish	terminal	cli-tool
+fontforge	fonts	application
+fzf	text	cli-tool
+gdal	geo	library
+gdb	development	cli-tool
+gh	vcs	cli-tool
+git	vcs	cli-tool
+gparted	filesystems	application
+gqrx	radio	application
+grafana	monitoring	server
+handbrake	video	application
+helix	editors	application
+htop	system	application	# ? full-screen TUI
+hyperfine	development	cli-tool
+hyprland	desktop	application
+imagemagick	graphics	cli-tool
+iosevka	fonts	data
+jq	text	cli-tool
+just	development	cli-tool
+kicad	electronics	application
+kitty	terminal	application
+krita	graphics	application
+kubectl	cloud	cli-tool
+lazygit	vcs	application	# ? full-screen TUI
+maxima	math	cli-tool
+meson	development	cli-tool
+mpv	video	application
+mtr	networking	cli-tool
+ncdu	filesystems	application	# ? full-screen TUI
+neomutt	email	application
+ninja	development	cli-tool
+nixfmt	nix	cli-tool
+nmap	networking	cli-tool
+nurl	nix	cli-tool
+obsidian	office	application
+openttd	games	application
+p7zip	compression	cli-tool
+pandoc	text	cli-tool
+papirus-icon-theme	themes	data
+podman	virtualization	cli-tool
+prometheus	monitoring	server
+qbittorrent	networking	application
+qemu	virtualization	application
+rawtherapee	photography	application
+rclone	filesystems	cli-tool
+redis	database	server
+restic	backup	cli-tool
+ripgrep	text	cli-tool
+rofi	desktop	application
+samtools	biology	cli-tool
+signal-desktop	chat	application
+sops	security	cli-tool
+starship	terminal	cli-tool
+statix	nix	cli-tool
+stellarium	education	application
+sway	desktop	application
+syncthing	filesystems	server
+tmux	terminal	cli-tool
+unrar	compression	cli-tool
+valgrind	development	cli-tool
+verilator	electronics	cli-tool
+virt-manager	virtualization	application
+vlc	video	application
+waybar	desktop	application
+wget	networking	cli-tool
+wireshark	networking	application
+zellij	terminal	application
+zotero	office	application
+zsh	terminal	cli-tool

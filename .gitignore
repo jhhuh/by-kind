@@ -3,8 +3,9 @@
 # data/fewshot.tsv) so changes are reviewable as diffs; everything DERIVED from
 # it is rebuilt. categories.sqlite alone is 18 MB of binary that would add a
 # fresh blob on every daily CI run.
-data/packages.jsonl
-data/packages.json
+data/packages*.jsonl
+data/packages*.json
+data/channels.json
 data/*.br
 data/categories.sqlite
 data/categories.json

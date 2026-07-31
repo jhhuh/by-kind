@@ -29,6 +29,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -36,7 +37,12 @@ ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / "vendor" / "nixpkgs"
 OUT = ROOT / "data" / "packages.jsonl"
 NIXPKGS_URL = "https://github.com/NixOS/nixpkgs.git"
-CHANNEL_URL = "https://channels.nixos.org/nixpkgs-unstable/packages.json.br"
+CHANNEL_URL = "https://channels.nixos.org/{channel}/packages.json.br"
+GITHUB_API = "https://api.github.com/repos/NixOS/nixpkgs/commits/{rev}"
+
+# Channels published on channels.nixos.org that carry a packages.json.
+CHANNELS = ["nixpkgs-unstable", "nixos-unstable", "nixos-unstable-small",
+            "nixos-26.05", "nixos-25.11", "nixos-25.05"]
 
 # Structural signals grepped from package.nix. Each becomes a feature token in
 # stage ③; the *weights* are learned there, not asserted here.
@@ -71,6 +77,36 @@ def run(args: list[str], cwd: Path | None = None) -> str:
 # --------------------------------------------------------------------------
 # sources
 # --------------------------------------------------------------------------
+def resolve_channel(channel: str) -> tuple[str, str]:
+    """Channel -> (release name, full nixpkgs sha).
+
+    The release name embeds a SHORT revision — `nixos-26.05.6503.21ea275a7c46`.
+    git cannot fetch a short sha ("couldn't find remote ref"), so it is expanded
+    via the GitHub API.
+
+    Pinning to the CHANNEL's revision, rather than to git master, is also a
+    correctness fix: the previous code took the name set from master and the
+    descriptions from the channel, which is exactly why ~187 packages showed up
+    as "missing from channel" — they existed on master but not in the snapshot.
+    """
+    request = urllib.request.Request(
+        CHANNEL_URL.format(channel=channel), method="HEAD")
+    with urllib.request.urlopen(request, timeout=120) as response:
+        release = Path(urllib.parse.urlparse(response.url).path).parent.name
+    short = release.rsplit(".", 1)[-1]
+    with urllib.request.urlopen(
+            GITHUB_API.format(rev=short), timeout=120) as response:
+        full = json.load(response)["sha"]
+    return release, full
+
+
+def fetch_rev(rev: str) -> None:
+    """Make one revision's trees and blobs available in the vendor clone."""
+    run(["git", "fetch", "--depth=1", "--filter=blob:none", "origin", rev],
+        cwd=VENDOR)
+    run(["git", "checkout", "--detach", rev], cwd=VENDOR)
+
+
 def ensure_nixpkgs(rev: str | None) -> str:
     """Blobless sparse clone of nixpkgs; returns the HEAD sha.
 
@@ -174,12 +210,13 @@ def load_channel(packages_json: Path) -> tuple[dict[str, list[dict]], dict[str, 
     return by_path, by_name
 
 
-def download_channel(dest: Path) -> Path:
-    """Fetch and brotli-decompress the channel dump."""
+def download_channel(dest: Path, channel: str) -> Path:
+    """Fetch and brotli-decompress one channel's dump."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     compressed = dest.with_suffix(".json.br")
-    print(f"downloading {CHANNEL_URL} ...", file=sys.stderr)
-    with urllib.request.urlopen(CHANNEL_URL, timeout=300) as response:
+    url = CHANNEL_URL.format(channel=channel)
+    print(f"downloading {url} ...", file=sys.stderr)
+    with urllib.request.urlopen(url, timeout=600) as response:
         compressed.write_bytes(response.read())
     subprocess.run(["brotli", "-d", "-f", "-o", str(dest), str(compressed)],
                    check=True)
@@ -246,50 +283,77 @@ def join(paths: dict[str, str], signals: dict[str, dict],
     return rows, missing
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--packages-json", type=Path,
-                    help="reuse a local decompressed channel dump")
-    ap.add_argument("--rev", help="nixpkgs revision (default: current master)")
-    ap.add_argument("--out", type=Path, default=OUT)
-    args = ap.parse_args()
+def acquire_channel(channel: str, keep_json: bool) -> dict:
+    """Acquire one channel, pinned to THAT channel's own nixpkgs revision.
 
-    head = ensure_nixpkgs(args.rev)
+    Pinning per channel is also a correctness fix. The previous single-channel
+    code took the name set from git master but the descriptions from the channel
+    snapshot, so ~187 packages showed as "missing from channel" purely because
+    master had moved on. Using one revision for both should close that gap.
+    """
+    release, rev = resolve_channel(channel)
+    fetch_rev(rev)
     paths = list_by_name()
-    print(f"nixpkgs {head[:12]}  by-name packages: {len(paths)}", file=sys.stderr)
 
     signals = structural_signals(paths)
+    dump = ROOT / "data" / f"packages.{channel}.json"
+    download_channel(dump, channel)
+    by_path, by_name = load_channel(dump)
+    if not keep_json:
+        dump.unlink(missing_ok=True)
 
-    packages_json = args.packages_json or download_channel(ROOT / "data" / "packages.json")
-    by_path, by_name = load_channel(packages_json)
+    rows, missing = join(paths, signals, by_path, rev, by_name)
+    for row in rows:
+        row["channel"] = channel
+        row["channel_release"] = release
 
-    rows, missing = join(paths, signals, by_path, head, by_name)
-
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w") as handle:
-        for row in rows:  # rows are name-sorted -> byte-stable output
+    out = ROOT / "data" / f"packages.{channel}.jsonl"
+    with out.open("w") as handle:
+        for row in rows:                     # name-sorted -> byte-stable
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
     matched = len(rows) - len(missing)
     coverage = matched / len(rows) if rows else 0.0
     described = sum(1 for r in rows if r["description"])
-    with_builder = sum(1 for r in rows if r["structural"].get("builders"))
-    desktop = sum(1 for r in rows if r["structural"].get("desktop_item"))
+    print(f"{channel:<22}{release:<36}{len(rows):>7}  "
+          f"cov {coverage:6.1%}  desc {described/len(rows):6.1%}  missing {len(missing)}")
+    return {"channel": channel, "release": release, "rev": rev,
+            "packages": len(rows), "coverage": coverage, "missing": len(missing)}
 
-    print(f"\nwrote {args.out}  ({len(rows)} rows)")
-    print(f"  channel coverage : {matched}/{len(rows)} = {coverage:.1%}")
-    print(f"  with description : {described}/{len(rows)} = {described/len(rows):.1%}")
-    print(f"  with builder fn  : {with_builder}/{len(rows)} = {with_builder/len(rows):.1%}")
-    print(f"  desktop item     : {desktop}/{len(rows)} = {desktop/len(rows):.1%}")
-    by_pos = sum(1 for r in rows if r.get("matched_by") == "position")
-    by_nm = sum(1 for r in rows if r.get("matched_by") == "name")
-    print(f"  matched by position/name : {by_pos} / {by_nm}")
-    print(f"  MISSING from channel: {len(missing)}"
-          + (f"  e.g. {', '.join(missing[:5])}" if missing else ""))
 
-    if coverage < 0.98:
-        print(f"\nERROR: channel coverage {coverage:.1%} < 98% floor", file=sys.stderr)
-        sys.exit(1)
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--channels", default=",".join(CHANNELS),
+                    help="comma-separated channel names")
+    ap.add_argument("--keep-json", action="store_true",
+                    help="keep decompressed dumps (src/train.py needs one)")
+    args = ap.parse_args()
+
+    ensure_nixpkgs(None)
+    channels = [c.strip() for c in args.channels.split(",") if c.strip()]
+    print(f"{'channel':<22}{'release':<36}{'packages':>7}")
+    print("-" * 96)
+
+    summary = []
+    for channel in channels:
+        try:
+            summary.append(acquire_channel(channel, args.keep_json))
+        except Exception as exc:                       # noqa: BLE001
+            # One unavailable channel must not sink the build: a stable release
+            # can be rotated out from under us at any time.
+            print(f"{channel:<22}FAILED: {exc}", file=sys.stderr)
+
+    if not summary:
+        sys.exit("no channel could be acquired")
+
+    (ROOT / "data" / "channels.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    print("-" * 96)
+    print(f"{len(summary)}/{len(channels)} channels -> data/channels.json")
+
+    worst = [s["channel"] for s in summary if s["coverage"] < 0.98]
+    if worst:
+        sys.exit(f"ERROR: coverage below the 98% floor for {worst}")
 
 
 if __name__ == "__main__":

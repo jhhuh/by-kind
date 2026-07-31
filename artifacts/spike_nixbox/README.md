@@ -178,3 +178,42 @@ else's syscall shim compatibility, not verification, so I stopped.
 Anyone picking this up should start from the Emscripten-FS build (not NODERAWFS)
 and work the ENOTDIR, since that path both matches the browser target and keeps
 the JS filesystem layer that OPFS would plug into.
+
+## i686 binary cache coverage: ~8%, which rules out every 32-bit emulator
+
+Worth measuring because it decides whether **v86** is usable — v86 is fully open
+(BSD-2), full-system (so a real kernel, real `fork`, real shell), and already has
+a JS 9p filesystem layer that OPFS could back. If i686 had cache coverage it would
+have solved every problem at once.
+
+It does not. Random sample of 45 by-name packages, evaluated for `i686-linux`,
+then checked against `cache.nixos.org`:
+
+```
+evaluate for i686-linux : 37/45   (8 unsupported or broken on that platform)
+substitute in cache     :  3/37 = 8%
+
+cached  : SDL_sound, aalib, abseil-cpp
+missing : _3mux, _4th, _6tunnel, aaaaxy, aacgain, aactivator, a4, ...
+```
+
+Hydra treats i686-linux as best-effort rather than a release target. Note the
+three hits are all *libraries*, almost certainly pulled in as dependencies of
+something else that was built — leaf-application coverage is nearer zero.
+
+*Caveat:* the sample was drawn from the first 400 names alphabetically, so it is
+`_`- and `a`-heavy rather than uniform. 8% is far enough from viable that a
+better sample would not change the conclusion.
+
+### Consequence
+
+Every 32-bit browser emulator is ruled out regardless of technical merit, because
+there are no binaries to run. That reduces the landscape to:
+
+| goal | remaining options |
+|---|---|
+| single command | Blink WASM (x86_64; builds, needs syscall-shim work) |
+| real shell | 64-bit **full-system** only: container2wasm, CheerpX, TEMU |
+
+container2wasm is now the only *fully open* route to a real shell, rather than
+one pragmatic choice among several.

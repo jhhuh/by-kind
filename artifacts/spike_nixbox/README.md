@@ -65,3 +65,62 @@ and subsequent packages are effectively instant, which is exactly the requiremen
   is an open request from Dec 2022 with no implementation. Emscripten has no
   `fork()`, and whether Blink's internal process emulation survives that port is
   the single unanswered question. Everything else above is settled.
+
+## Follow-up: does Blink's browser build support a shell? **No.**
+
+Answered by reading the source rather than guessing. Two corrections to earlier
+assumptions, in opposite directions.
+
+**Correction 1 — the Emscripten port is not hypothetical.** I previously said it
+did not exist, based on issue #8 being an open request. Wrong: Blink has
+first-class in-tree web support — `blink/web.h`, `__EMSCRIPTEN__` conditionals
+through `blink.c`, `map.c`, `procfs.c`, `ioctl.c`, `readansi.c`, and a complete
+`blink/blink-shell.html` Emscripten harness. Issue #8 simply never got closed.
+
+**Correction 2 — but `fork` genuinely does not survive it.** Blink implements
+guest fork by delegating to *host* fork:
+
+```c
+// blink/syscall.c:426
+pid = fork();
+```
+
+gated behind a `configure`-probed `HAVE_FORK`, and when it is absent:
+
+```c
+// blink/syscall.c:597
+#ifdef HAVE_FORK
+    return Fork(m, flags, stack, ctid);
+#else
+    LOGF("forking support disabled");
+    return enosys();
+#endif
+```
+
+The syscall table registers `fork`, `vfork`, `wait4` and `kill` only under
+`#ifdef HAVE_FORK`. Emscripten provides no `fork()`, so the probe fails and those
+syscalls are absent entirely. `bash` cannot spawn a child.
+
+Also note `blink/map.c:102` returns a **32-bit address space** under Emscripten,
+a further constraint on what guests can run.
+
+### What this means
+
+| goal | browser feasibility |
+|---|---|
+| run **one command** (`jq .`, `rg pattern`, `hello`) | ✅ reachable today with in-tree Emscripten support |
+| run a **real shell** with pipes and subshells | ❌ needs fork, which the WASM build lacks |
+
+So there are two honest products:
+
+1. **JS shell driving per-command Blink execs.** A prompt, `PATH` resolving into
+   the OPFS store, each command a real emulated x86-64 binary. No subshells, no
+   job control, no shell scripts. Everything else in this spike applies unchanged,
+   and it is reachable now.
+2. **A real shell**, which requires either full-system emulation
+   (container2wasm, CheerpX, TEMU) or teaching Blink to emulate fork *internally*
+   — copy-on-write memory, a process table, `wait4` — instead of borrowing the
+   host's. That is genuine engineering, not configuration.
+
+For a showcase where someone clicks `ripgrep` and types `rg --version`, option 1
+may simply be the right product, and it is the cheaper one by a wide margin.

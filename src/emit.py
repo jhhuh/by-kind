@@ -128,6 +128,33 @@ td.d{color:var(--dim)}
 .only{color:var(--dim);font-size:.85rem;display:flex;gap:.35rem;align-items:center;cursor:pointer}
 .scroll{overflow-x:auto}
 #count{color:var(--dim);font-size:.85rem}
+
+/* Mobile: the desktop layout wraps `nav` to full width as nine stacked
+   buttons AND keeps it sticky, so you scroll past a wall of filters to reach
+   any result. Turn the filters into a horizontal chip strip, unstick them,
+   and stick the search box instead -- that is the control you actually reach
+   for when scrolling. */
+@media (max-width: 700px) {
+  header{padding:.8rem .8rem .6rem}
+  h1{font-size:1rem}
+  .note{font-size:.8rem}
+  .note details summary{cursor:pointer;color:var(--accent);list-style:none}
+  .wrap{flex-direction:column;gap:.6rem;padding:.6rem}
+  nav{position:static;flex:1 1 auto;width:100%;display:flex;gap:.3rem;
+      overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:.2rem;
+      scrollbar-width:none}
+  nav::-webkit-scrollbar{display:none}
+  nav button{width:auto;flex:0 0 auto;border:1px solid var(--line);
+             border-radius:99px;padding:.25rem .6rem;font-size:.82rem;gap:.35rem}
+  nav button span{font-size:.75rem}
+  .sticky-search{position:sticky;top:0;z-index:5;background:var(--bg);
+                 padding:.4rem 0 .2rem;margin:0}
+  input[type=search]{margin-bottom:.4rem}
+  td,th{padding:.35rem .3rem;font-size:.86rem}
+  td.n{white-space:normal;word-break:break-all}
+  td.d{font-size:.8rem}
+  footer{padding:.8rem;font-size:.78rem}
+}
 .repo{margin:.35rem 0 0;font-size:.85rem}
 .repo a,footer a{color:var(--accent);text-decoration:none}
 .repo a:hover,footer a:hover{text-decoration:underline}
@@ -144,18 +171,22 @@ def write_html(channels: list[dict], counts: dict, out: Path) -> None:
 <h1>by-kind — nixpkgs <code>pkgs/by-name</code>, organised by what things are</h1>
 <p class="repo"><a href="{REPO}" rel="noreferrer">source &amp; method on GitHub ↗</a></p>
 <p class="note">nixpkgs gives you <code>pkgs/by-name</code>; this gives you <em>by kind</em>.
+<details><summary>accuracy &amp; caveats</summary>
 Measured accuracy on a 94-package hand-labelled sample: <strong>{GOLD_ACCURACY['overall']:.0%}</strong>
 overall — {GOLD_ACCURACY['probable']:.0%} for <span class="tag">probable</span>,
 {GOLD_ACCURACY['uncertain']:.0%} for <span class="tag uncertain">uncertain</span>, which are marked and
 show alternatives. The <em>domain</em> facet (audio, networking, …) is
 <strong>not shipped</strong>: it scored 13.8% and would mislead.
-Package names link to <code>package.nix</code> at each channel's exact revision.</p>
+Package names link to <code>package.nix</code> at each channel's exact revision.
+</details></p>
 <div id="tabs" class="tabs"></div>
 </header>
 <div class="wrap">
 <nav id="nav"></nav>
 <main>
+<div class="sticky-search">
 <input type="search" id="q" placeholder="Search name or description…" autocomplete="off">
+</div>
 <div class="bar"><div id="count"></div>
 <label class="only"><input type="checkbox" id="newonly"> only new since <span id="prev"></span></label></div>
 <div class="scroll"><table><thead><tr><th>package</th><th>kind</th><th>description</th></tr></thead>
@@ -208,7 +239,8 @@ function draw(){{
   $('count').textContent=`${{hits.length.toLocaleString()}} package${{hits.length===1?'':'s'}} in ${{chan}}`
     +(tab.prev?` · ${{tab.new.toLocaleString()}} new since ${{tab.prev}}`:'');
   const frag=document.createDocumentFragment();
-  hits.slice(0,600).forEach(r=>{{const tr=document.createElement('tr');
+  const CAP = window.innerWidth <= 700 ? 200 : 600;
+  hits.slice(0,CAP).forEach(r=>{{const tr=document.createElement('tr');
     const path=`pkgs/by-name/${{r[0].slice(0,2).toLowerCase()}}/${{r[0]}}/package.nix`;
     tr.innerHTML=`<td class="n"><a href="${{BLOB}}${{path}}" rel="noreferrer">${{r[0]}}</a></td>`+
       `<td><span class="tag ${{r[2]==='uncertain'?'uncertain':''}}">${{r[1]}}</span>`+
@@ -216,8 +248,8 @@ function draw(){{
       `<td class="d">${{r[3].replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}}</td>`;
     frag.appendChild(tr);}});
   $('rows').innerHTML=''; $('rows').appendChild(frag);
-  if(hits.length>600){{const tr=document.createElement('tr');
-    tr.innerHTML=`<td colspan="3" class="d">… ${{(hits.length-600).toLocaleString()}} more; refine the search</td>`;
+  if(hits.length>CAP){{const tr=document.createElement('tr');
+    tr.innerHTML=`<td colspan="3" class="d">… ${{(hits.length-CAP).toLocaleString()}} more; refine the search</td>`;
     $('rows').appendChild(tr);}}
 }}
 $('q').addEventListener('input',e=>{{q=e.target.value;draw();}});

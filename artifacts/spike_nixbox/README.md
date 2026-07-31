@@ -309,3 +309,61 @@ Two ways forward, neither attempted:
 2. Build `qemu-wasm` directly with emscripten, skipping `c2w`. Emscripten works
    here (it built Blink), but a QEMU build is far larger than Blink's and this
    would be exploratory rather than bounded.
+
+## The architecture exists and is documented: qemu-wasm + virtfs
+
+`ktock/qemu-wasm` supports exactly the design proposed at the start of this
+investigation — instantiate `/nix/store` *outside* the machine and hand it in —
+with **no emulator modification**. From `examples/virtfs/`:
+
+```js
+// host side, plain JavaScript
+Module['preRun'].push((mod) => {
+    mod.FS.mkdir('/share');
+    mod.FS.writeFile('/share/file', 'test');
+});
+'-virtfs', 'local,path=/share,mount_tag=share0,security_model=passthrough,id=share0',
+```
+
+```console
+# guest side, a real Linux
+$ mount -t 9p -o trans=virtio share0 /mnt/ -oversion=9p2000.L
+$ cat /mnt/file
+test
+```
+
+The chain is: **browser JS → Emscripten `FS` → QEMU virtio-9p → guest mount**.
+The build exports `FS` to JavaScript (`EXPORTED_RUNTIME_METHODS=…,FS`) and enables
+`--enable-virtfs`, both already in the documented configure line.
+
+Substitute `/nixstore` for `/share`, populate it with closures fetched and
+NAR-parsed in the browser — proven earlier in this document — and the guest gets
+a real `/nix/store` with a real kernel, real `fork`, and a real shell.
+
+### Everything needed now exists
+
+| piece | status |
+|---|---|
+| fetch NARs from cache.nixos.org in-browser | ✅ CORS `*`, proven |
+| parse NAR → files | ✅ proven, ~40 lines |
+| closure walk via `References` | ✅ proven |
+| per-package delta over cached base | ✅ 0.04–2 MB typical |
+| real kernel / `fork` / shell | ✅ full-system QEMU |
+| inject host files from JS | ✅ `Module.FS` + `-virtfs`, documented |
+| x86_64 **and** aarch64 guests | ✅ both, both have nixpkgs cache coverage |
+| live proof it runs in a browser | ✅ https://ktock.github.io/qemu-wasm-demo/ |
+
+### Practical notes for whoever builds this
+
+- **Cross-origin isolation is required.** The build uses pthreads
+  (`-sPROXY_TO_PTHREAD=1`), so SharedArrayBuffer needs COOP/COEP headers. GitHub
+  Pages does not set them; the demo works around it with `coi-serviceworker.js`.
+  A by-kind integration would need the same shim.
+- **`-sTOTAL_MEMORY=2300MB`** in the documented build. Desktop-fine, phone-hostile.
+- **Building from source is a real project**, not a shortcut: zlib, libffi, a
+  libresolv stub, glib 2.75 (meson) and pixman all compiled with emscripten, and
+  the repo pins **emsdk 3.1.50** with a `# TODO: support recent version` note —
+  our emscripten is 4.0.10, so newer is known-broken. Using Docker for the deps,
+  as the README does, is by far the cheaper path.
+- Reusing the demo's prebuilt artifacts is the cheapest way to prototype: the
+  rootfs is a separately-fetched `.data` package, not baked into the wasm.

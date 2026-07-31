@@ -254,3 +254,58 @@ out arch-switching as an escape from the fork problem.
 Worth revisiting if an **aarch64 WASM emulator** appears (a QEMU→WASM aarch64
 target would qualify): it would be immediately viable at 95% coverage with no
 nixpkgs-side work at all.
+
+## container2wasm / qemu-wasm: the actual state of the art
+
+`c2w` is packaged in nixpkgs (found, pleasingly, by querying by-kind itself).
+Two of its flags change the design materially:
+
+- **`--external-bundle`** — *"Do not embed container image to the Wasm image but
+  mount it during runtime."* This is the pluggable filesystem seam, as a supported
+  flag rather than a fork.
+- **`--pack ... (valid only for aarch64 QEMU on emscripten)`** — an aarch64 target
+  exists.
+
+Its Dockerfile names the two emulator backends:
+
+```
+BOCHS_REPO=https://github.com/ktock/Bochs
+QEMU_REPO=https://github.com/ktock/qemu-wasm
+```
+
+### Correction: aarch64 in the browser *does* exist
+
+Earlier in this document I concluded aarch64 had 95% cache coverage but no browser
+emulator, and that x86_64 was therefore the only architecture scoring on both
+axes. **That was wrong.** `ktock/qemu-wasm` supports **x86_64, aarch64 and
+riscv64**, full-system with a real kernel and shell, using a hybrid TCG→WASM JIT
+(hot translation blocks compiled to Wasm, cold paths interpreted via TCI), with
+`--enable-virtfs` for virtio-9p. Work is being upstreamed into QEMU — TCI for
+32-bit guests landed in QEMU 10.1.
+
+Revised architecture table:
+
+| arch | nixpkgs cache | browser emulator | verdict |
+|---|---:|---|---|
+| x86_64 | ~100% | qemu-wasm (JIT) or Bochs | viable |
+| **aarch64** | **95%** | **qemu-wasm (JIT)** | **viable — and previously dismissed in error** |
+| riscv64 | 0% | qemu-wasm, TinyEMU | no binaries |
+| i686 | 8% | v86 | no binaries |
+
+Both x86_64 and aarch64 now work. aarch64 is worth considering on the merits:
+QEMU's aarch64 TCG is heavily exercised, and it avoids x86_64's instruction
+decode complexity.
+
+### Blocked here: no container runtime
+
+`c2w` requires docker/buildx and this sandbox has no docker, podman, buildah,
+nerdctl or buildctl, so an image could not be built or tested. The findings above
+are from source and documentation, not execution.
+
+Two ways forward, neither attempted:
+
+1. Run `c2w --to-js --external-bundle` on a machine with Docker. Cheapest path to
+   a working artifact.
+2. Build `qemu-wasm` directly with emscripten, skipping `c2w`. Emscripten works
+   here (it built Blink), but a QEMU build is far larger than Blink's and this
+   would be exploratory rather than bounded.

@@ -76,6 +76,28 @@ Classification is a deterministic table lookup — no network, no API key, no
 randomness. The same inputs and model version produce byte-identical output.
 Learned weights are checked in as diffable TSV under `model/`.
 
+## Published automatically
+
+`.github/workflows/pages.yml` rebuilds daily and publishes to GitHub Pages.
+A build is ~1 minute because **it does not retrain** — `model/` is committed, so
+CI only re-scores the current nixpkgs against the existing weights. That keeps
+results diffable across runs. Retraining is an explicit, occasional act
+(`src/train.py`) done when the taxonomy or feature set changes.
+
+`scripts/build.sh` is the same code path CI runs, so a green CI means a working
+local build. It includes a quality gate: if `kind` accuracy on the hand-labelled
+gold set drops below 65%, the build fails rather than publishing a regression.
+
+### What is committed, and what is not
+
+Text that *determines* the output is tracked so changes are reviewable as diffs:
+`model/weights.*.tsv`, `data/taxonomy.yaml`, `data/legacy_mapping.yaml`,
+`data/fewshot.tsv`.
+
+Everything *derived* is rebuilt and ignored: `data/packages.jsonl`,
+`data/categories.sqlite` (18 MB of binary — committing it daily would add several
+GB per year and produce no readable diff), and `dist/`.
+
 ## Documentation
 
 - **Design spec:** [`docs/superpowers/specs/2026-07-28-cat-nixpkgs-design.md`](docs/superpowers/specs/2026-07-28-cat-nixpkgs-design.md)

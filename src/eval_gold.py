@@ -6,13 +6,18 @@ is usable, because the legacy corpus and pkgs/by-name differ sharply.
 
 Usage:  nix develop -c python3 src/eval_gold.py
 """
-import sqlite3, sys
+import argparse, sqlite3, sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLD = ROOT / "tests" / "fixtures" / "gold_by_name.tsv"
 DB = ROOT / "data" / "categories.sqlite"
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--min-kind", type=float, default=None,
+                 help="exit non-zero if kind top-1 falls below this (CI gate)")
+_args = _ap.parse_args()
 
 gold = {}
 for line in GOLD.read_text().splitlines():
@@ -69,6 +74,13 @@ for facet, idx, cidx in (("domain", 0, 2), ("kind", 1, 4)):
 print(f"\nmost common wrong domain predictions:")
 for pred, c in Counter(p for _, _, p, _ in misses).most_common(5):
     print(f"  predicted {pred:<16} {c} times")
+if _args.min_kind is not None:
+    if hit_k / n < _args.min_kind:
+        print(f"\nFAIL: kind top-1 {hit_k/n:.1%} below floor {_args.min_kind:.1%}",
+              file=sys.stderr)
+        raise SystemExit(1)
+    print(f"\nOK: kind top-1 {hit_k/n:.1%} >= floor {_args.min_kind:.1%}")
+
 print(f"\nfirst 12 domain misses:")
 for name, gd, pd, dc in misses[:12]:
     print(f"  {name:<20} gold {gd:<14} got {pd:<14} ({dc})")

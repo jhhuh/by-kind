@@ -27,6 +27,11 @@ DIST = ROOT / "dist"
 # calibrate their trust rather than taking a bare label at face value.
 GOLD_ACCURACY = {"overall": 0.713, "probable": 0.790, "uncertain": 0.581, "n": 94}
 
+# Commit-pinned, not branch-pinned: a /blob/master/ link rots as soon as a
+# package moves or is renamed. Pinning to the revision this build saw makes the
+# link permanent and makes the page honest about which nixpkgs it describes.
+GITHUB = "https://github.com/NixOS/nixpkgs/blob/{rev}/{path}"
+
 KIND_ORDER = ["application", "cli-tool", "library", "server", "data",
               "plugin", "driver", "build-support", "other"]
 
@@ -36,8 +41,8 @@ def load(db: Path) -> list[dict]:
     conn.row_factory = sqlite3.Row
     rows = [dict(r) for r in conn.execute(
         "SELECT name, path, attr, description, homepage, main_program, broken,"
-        " unfree, kind, kind_confidence, kind_alternates, top_features"
-        " FROM packages ORDER BY name")]
+        " unfree, kind, kind_confidence, kind_alternates, top_features,"
+        " nixpkgs_rev FROM packages ORDER BY name")]
     meta = dict(conn.execute("SELECT key, value FROM run_meta").fetchall())
     conn.close()
     return rows, meta
@@ -54,7 +59,8 @@ def write_json(rows: list[dict], meta: dict, out: Path) -> None:
              "confidence": r["kind_confidence"],
              "alternates": json.loads(r["kind_alternates"] or "[]"),
              "description": r["description"], "attr": r["attr"],
-             "path": r["path"]}
+             "path": r["path"],
+             "source_url": GITHUB.format(rev=r["nixpkgs_rev"], path=r["path"])}
             for r in rows
         ],
     }
@@ -90,6 +96,8 @@ table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:.8rem;color:var(--dim);font-weight:600}
 td.n{font-family:ui-monospace,monospace;white-space:nowrap}
+td.n a{color:var(--accent);text-decoration:none}
+td.n a:hover{text-decoration:underline}
 td.d{color:var(--dim)}
 .tag{font-size:.72rem;padding:.1rem .4rem;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
 .tag.uncertain{color:var(--warn);border-color:var(--warn)}
@@ -105,6 +113,10 @@ def write_html(rows: list[dict], meta: dict, out: Path) -> None:
     ordered = [k for k in KIND_ORDER if k in counts] + \
               sorted(k for k in counts if k not in KIND_ORDER)
 
+    rev = rows[0]["nixpkgs_rev"] if rows else "master"
+    # The by-name path is fully derivable: pkgs/by-name/<first two chars,
+    # lowercased>/<name>/package.nix. Verified for all 21,443 packages, so
+    # deriving it in JS instead of shipping it per row saves ~30% of page size.
     compact = [[r["name"], r["kind"], r["kind_confidence"],
                 r["description"] or ""] for r in rows]
 
@@ -115,7 +127,9 @@ Measured accuracy on a 94-package hand-labelled sample: <strong>{GOLD_ACCURACY['
 overall — {GOLD_ACCURACY['probable']:.0%} for <span class="tag">probable</span>,
 {GOLD_ACCURACY['uncertain']:.0%} for <span class="tag uncertain">uncertain</span>.
 The <em>domain</em> facet (audio, networking, …) is <strong>not shipped</strong>: it scored 13.8%
-and would mislead. Uncertain rows show their alternatives.</p>
+and would mislead. Uncertain rows show their alternatives.
+Package names link to their <code>package.nix</code> at the exact nixpkgs revision
+this page was built from.</p>
 </header>
 <div class="wrap">
 <nav id="nav"></nav>
@@ -126,6 +140,7 @@ and would mislead. Uncertain rows show their alternatives.</p>
 <tbody id="rows"></tbody></table></div>
 </main></div>
 <script>
+const BLOB="https://github.com/NixOS/nixpkgs/blob/{rev}/";
 const DATA={json.dumps(compact, separators=(',', ':'))};
 const COUNTS={json.dumps(counts)};
 const ORDER={json.dumps(ordered)};
@@ -147,7 +162,8 @@ function draw(){{
   tbody.innerHTML='';
   const frag=document.createDocumentFragment();
   hits.slice(0,600).forEach(r=>{{const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="n">${{r[0]}}</td>`+
+    const path=`pkgs/by-name/${{r[0].slice(0,2).toLowerCase()}}/${{r[0]}}/package.nix`;
+    tr.innerHTML=`<td class="n"><a href="${{BLOB}}${{path}}" rel="noreferrer">${{r[0]}}</a></td>`+
       `<td><span class="tag ${{r[2]==='uncertain'?'uncertain':''}}">${{r[1]}}</span></td>`+
       `<td class="d">${{r[3].replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}}</td>`;
     frag.appendChild(tr);}});

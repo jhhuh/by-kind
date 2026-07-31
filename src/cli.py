@@ -26,7 +26,12 @@ GOLD = {"overall": 0.713, "probable": 0.790, "uncertain": 0.581, "n": 94}
 
 def connect(db: Path) -> sqlite3.Connection:
     if not db.exists():
-        sys.exit(f"no database at {db} — run src/classify.py first")
+        sys.exit(
+            f"no database at {db}\n\n"
+            "The database is a build artifact and is not committed (18 MB of\n"
+            "binary that would grow the repo on every daily rebuild). Build it:\n\n"
+            "    nix develop -c ./scripts/build.sh   # ~1 minute\n\n"
+            "Or browse the published site instead — see README.")
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     return conn
@@ -86,6 +91,10 @@ def cmd_show(conn, args) -> None:
     print(f"  description  {r['description'] or '-'}")
     print(f"  attribute    {r['attr'] or '-'}")
     print(f"  path         {r['path']}")
+    if r["nixpkgs_rev"]:
+        # commit-pinned so the link does not rot when the package moves
+        print(f"  source       https://github.com/NixOS/nixpkgs/blob/"
+              f"{r['nixpkgs_rev']}/{r['path']}")
     print(f"  homepage     {r['homepage'] or '-'}")
     print(f"\n  kind         {r['kind']}  ({r['kind_confidence']})")
     alts = json.loads(r["kind_alternates"] or "[]")

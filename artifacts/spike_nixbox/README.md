@@ -367,3 +367,48 @@ a real `/nix/store` with a real kernel, real `fork`, and a real shell.
   as the README does, is by far the cheaper path.
 - Reusing the demo's prebuilt artifacts is the cheapest way to prototype: the
   rootfs is a separately-fetched `.data` package, not baked into the wasm.
+
+## FOSDEM 2025 talk: "Running QEMU Inside Browser" (Kohei Tokunaga, NTT)
+
+[Slides](https://archive.fosdem.org/2025/events/attachments/fosdem-2025-6290-running-qemu-inside-browser/slides/238760/slides_1dDtpcS.pdf).
+Confirms the architecture from the author directly, and adds numbers.
+
+**Performance (slide 16)** — pigz compressing 10 MB of random data on an emulated
+x86_64 guest, Chrome 130, i7-10510U:
+
+| backend | relative time (lower better) |
+|---|---:|
+| Bochs | ~40 |
+| QEMU Wasm, single-threaded | ~13 |
+| **QEMU Wasm, 4-thread MTTCG** | **~7.5** |
+
+**qemu-wasm is roughly 5× faster than Bochs**, so `c2w --to-js` (which selects
+qemu-wasm) is strongly preferable to the default Bochs path.
+
+**Slide 17 states our design verbatim:**
+
+```
+JS:     FS.writeFile('/share/file', 'test');
+QEMU:   -virtfs local,path=/share,mount_tag=share0…
+Guest:  $ mount -t 9p share0 /mnt/  &&  cat /mnt/file  →  test
+```
+
+**Execution model (slides 12–14):** TCG IR is translated to Wasm modules via
+`WebAssembly.Module`/`Instance`. Because browsers cannot create thousands of
+modules at once, blocks run on the TCI *interpreter* by default and only blocks
+executed many times (~1500) are compiled to Wasm. Expect warm-up: the first run
+of anything is slow, repeated work speeds up. MTTCG uses emscripten pthreads.
+
+**Other specifics:** demo guest runs `-m 512M` with `-accel tcg,tb-size=500`
+(the 2300 MB figure elsewhere is the wasm heap, not guest RAM). Networking has
+two modes — WebSocket to a host-side daemon, or Fetch API entirely in-browser
+with the caveat "limited destination by CORS". For us the Fetch route is fine:
+cache.nixos.org sends `access-control-allow-origin: *`.
+
+**Listed as future work (slide 26):** *"Accessing package repos (e.g. apk, apt, …)
+and container registries from browser (w/ CORS restriction)"* — precisely this
+use case, and nix is the easiest instance of it because its cache is already
+CORS-open.
+
+Slide 27 also confirms independently that **v86 has no x86_64 guest support** and
+Qemu.js is single-threaded with no 64-bit guests.

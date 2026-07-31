@@ -15,6 +15,8 @@ GOLD = ROOT / "tests" / "fixtures" / "gold_by_name.tsv"
 DB = ROOT / "data" / "categories.sqlite"
 
 _ap = argparse.ArgumentParser()
+_ap.add_argument("--channel", default="nixpkgs-unstable",
+                 help="the gold set was labelled against unstable")
 _ap.add_argument("--min-kind", type=float, default=None,
                  help="exit non-zero if kind top-1 falls below this (CI gate)")
 _args = _ap.parse_args()
@@ -48,7 +50,7 @@ for name, (gd, gk) in sorted(gold.items()):
     if not ok_d:
         misses.append((name, gd, pd, dc))
 
-print(f"gold set: {n} hand-labelled by-name packages\n")
+print(f"gold set: {n} hand-labelled by-name packages ({_args.channel})\n")
 print(f"  domain top-1 : {hit_d}/{n} = {hit_d/n:.1%}")
 print(f"  domain top-3 : {hit_d3}/{n} = {hit_d3/n:.1%}")
 print(f"  kind   top-1 : {hit_k}/{n} = {hit_k/n:.1%}")

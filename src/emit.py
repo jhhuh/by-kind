@@ -31,45 +31,61 @@ GOLD_ACCURACY = {"overall": 0.713, "probable": 0.790, "uncertain": 0.581, "n": 9
 # package moves or is renamed. Pinning to the revision this build saw makes the
 # link permanent and makes the page honest about which nixpkgs it describes.
 GITHUB = "https://github.com/NixOS/nixpkgs/blob/{rev}/{path}"
+REPO = "https://github.com/jhhuh/by-kind"
 
 KIND_ORDER = ["application", "cli-tool", "library", "server", "data",
               "plugin", "driver", "build-support", "other"]
 
 
-def load(db: Path) -> list[dict]:
+def load(db: Path):
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
-    rows = [dict(r) for r in conn.execute(
-        "SELECT name, path, attr, description, homepage, main_program, broken,"
-        " unfree, kind, kind_confidence, kind_alternates, top_features,"
-        " nixpkgs_rev FROM packages ORDER BY name")]
+    channels = [dict(r) for r in conn.execute(
+        "SELECT channel, channel_release, nixpkgs_rev, COUNT(*) n,"
+        " SUM(is_new) new, MAX(compared_to) prev FROM packages"
+        " GROUP BY channel ORDER BY channel")]
+    rows = {}
+    for c in channels:
+        rows[c["channel"]] = [dict(r) for r in conn.execute(
+            "SELECT name, kind, kind_confidence, description, is_new,"
+            " compared_to FROM packages WHERE channel=? ORDER BY name",
+            (c["channel"],))]
     meta = dict(conn.execute("SELECT key, value FROM run_meta").fetchall())
     conn.close()
-    return rows, meta
+    return channels, rows, meta
 
 
-def write_json(rows: list[dict], meta: dict, out: Path) -> None:
-    payload = {
+def order_channels(channels: list[dict]) -> list[dict]:
+    """Unstable first (what most people want), then stable newest-first."""
+    def key(c):
+        name = c["channel"]
+        return (0 if "unstable" in name else 1,
+                0 if name == "nixpkgs-unstable" else 1,
+                [-int(p) for p in name.split("-")[-1].split(".")
+                 if p.isdigit()] or [0], name)
+    return sorted(channels, key=key)
+
+
+def write_channel_json(channel: dict, rows: list[dict], out: Path) -> None:
+    """One file per channel, fetched lazily. Doubles as the data API."""
+    out.write_text(json.dumps({
+        "channel": channel["channel"],
+        "release": channel["channel_release"],
+        "nixpkgs_rev": channel["nixpkgs_rev"],
+        "gold_accuracy": GOLD_ACCURACY,
         "shipped_facet": "kind",
         "withheld": {"domain": "13.8% on the by-name gold set; see README"},
-        "gold_accuracy": GOLD_ACCURACY,
-        "nixpkgs_rev": meta.get("model_version"),
-        "packages": [
-            {"name": r["name"], "kind": r["kind"],
-             "confidence": r["kind_confidence"],
-             "alternates": json.loads(r["kind_alternates"] or "[]"),
-             "description": r["description"], "attr": r["attr"],
-             "path": r["path"],
-             "source_url": GITHUB.format(rev=r["nixpkgs_rev"], path=r["path"])}
-            for r in rows
-        ],
-    }
-    out.write_text(json.dumps(payload, indent=None, sort_keys=True) + "\n")
+        # compact: the by-name path is derivable from the name, so it is not stored
+        "compared_to": rows[0]["compared_to"] if rows else None,
+        "packages": [[r["name"], r["kind"], r["kind_confidence"],
+                      r["description"] or "", r["is_new"]] for r in rows],
+        "columns": ["name", "kind", "confidence", "description", "is_new"],
+    }, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 HTML_HEAD = """<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>by-kind — browse nixpkgs pkgs/by-name by kind</title>
+<title>by-kind — nixpkgs pkgs/by-name, organised by kind</title>
 <style>
 :root{--bg:#fff;--fg:#1a1a1a;--dim:#666;--line:#e3e3e3;--accent:#2d5b8e;--warn:#8a5a00}
 @media(prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e8e8e8;--dim:#9aa0a6;--line:#2c2f36;--accent:#7fb0e8;--warn:#d8a13a}}
@@ -78,9 +94,14 @@ HTML_HEAD = """<meta charset="utf-8">
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
 header{padding:1.2rem 1rem;border-bottom:1px solid var(--line)}
-h1{margin:0 0 .3rem;font-size:1.2rem}
-.note{color:var(--dim);font-size:.85rem;max-width:60ch}
+h1{margin:0 0 .3rem;font-size:1.15rem}
+.note{color:var(--dim);font-size:.85rem;max-width:68ch}
 .note strong{color:var(--warn)}
+.tabs{display:flex;gap:.3rem;margin-top:.9rem;flex-wrap:wrap}
+.tab{background:none;border:1px solid var(--line);border-radius:99px;color:var(--dim);
+ font:inherit;font-size:.82rem;padding:.25rem .7rem;cursor:pointer}
+.tab:hover{color:var(--fg)}
+.tab[aria-current=true]{background:var(--accent);border-color:var(--accent);color:#fff}
 .wrap{display:flex;gap:1.5rem;padding:1rem;align-items:flex-start;flex-wrap:wrap}
 nav{flex:0 0 200px;position:sticky;top:1rem}
 nav button{display:flex;justify-content:space-between;width:100%;background:none;
@@ -101,79 +122,107 @@ td.n a:hover{text-decoration:underline}
 td.d{color:var(--dim)}
 .tag{font-size:.72rem;padding:.1rem .4rem;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
 .tag.uncertain{color:var(--warn);border-color:var(--warn)}
+.tag.new{color:#0a7d3f;border-color:#0a7d3f;font-weight:600}
+@media(prefers-color-scheme:dark){.tag.new{color:#5fd08a;border-color:#5fd08a}}
+.bar{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem}
+.only{color:var(--dim);font-size:.85rem;display:flex;gap:.35rem;align-items:center;cursor:pointer}
 .scroll{overflow-x:auto}
-#count{color:var(--dim);font-size:.85rem;margin-bottom:.5rem}
+#count{color:var(--dim);font-size:.85rem}
+.repo{margin:.35rem 0 0;font-size:.85rem}
+.repo a,footer a{color:var(--accent);text-decoration:none}
+.repo a:hover,footer a:hover{text-decoration:underline}
+footer{border-top:1px solid var(--line);margin-top:2rem;padding:1rem;
+ color:var(--dim);font-size:.82rem;line-height:1.8}
 </style>"""
 
 
-def write_html(rows: list[dict], meta: dict, out: Path) -> None:
-    counts: dict[str, int] = {}
-    for r in rows:
-        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
-    ordered = [k for k in KIND_ORDER if k in counts] + \
-              sorted(k for k in counts if k not in KIND_ORDER)
-
-    rev = rows[0]["nixpkgs_rev"] if rows else "master"
-    # The by-name path is fully derivable: pkgs/by-name/<first two chars,
-    # lowercased>/<name>/package.nix. Verified for all 21,443 packages, so
-    # deriving it in JS instead of shipping it per row saves ~30% of page size.
-    compact = [[r["name"], r["kind"], r["kind_confidence"],
-                r["description"] or ""] for r in rows]
-
+def write_html(channels: list[dict], counts: dict, out: Path) -> None:
+    tabs = [{"channel": c["channel"], "release": c["channel_release"],
+             "rev": c["nixpkgs_rev"], "n": c["n"], "new": c["new"],
+             "prev": c["prev"], "kinds": counts[c["channel"]]} for c in channels]
     body = f"""<header>
-<h1>by-kind — {len(rows):,} packages in <code>pkgs/by-name</code></h1>
-<p class="note">Classified by <strong>kind</strong> (what a package <em>is</em>).
+<h1>by-kind — nixpkgs <code>pkgs/by-name</code>, organised by what things are</h1>
+<p class="repo"><a href="{REPO}" rel="noreferrer">source &amp; method on GitHub ↗</a></p>
+<p class="note">nixpkgs gives you <code>pkgs/by-name</code>; this gives you <em>by kind</em>.
 Measured accuracy on a 94-package hand-labelled sample: <strong>{GOLD_ACCURACY['overall']:.0%}</strong>
 overall — {GOLD_ACCURACY['probable']:.0%} for <span class="tag">probable</span>,
-{GOLD_ACCURACY['uncertain']:.0%} for <span class="tag uncertain">uncertain</span>.
-The <em>domain</em> facet (audio, networking, …) is <strong>not shipped</strong>: it scored 13.8%
-and would mislead. Uncertain rows show their alternatives.
-Package names link to their <code>package.nix</code> at the exact nixpkgs revision
-this page was built from.</p>
+{GOLD_ACCURACY['uncertain']:.0%} for <span class="tag uncertain">uncertain</span>, which are marked and
+show alternatives. The <em>domain</em> facet (audio, networking, …) is
+<strong>not shipped</strong>: it scored 13.8% and would mislead.
+Package names link to <code>package.nix</code> at each channel's exact revision.</p>
+<div id="tabs" class="tabs"></div>
 </header>
 <div class="wrap">
 <nav id="nav"></nav>
 <main>
 <input type="search" id="q" placeholder="Search name or description…" autocomplete="off">
-<div id="count"></div>
+<div class="bar"><div id="count"></div>
+<label class="only"><input type="checkbox" id="newonly"> only new since <span id="prev"></span></label></div>
 <div class="scroll"><table><thead><tr><th>package</th><th>kind</th><th>description</th></tr></thead>
 <tbody id="rows"></tbody></table></div>
 </main></div>
+<footer>
+<a href="{REPO}" rel="noreferrer">jhhuh/by-kind</a> ·
+rebuilt daily from <a href="https://channels.nixos.org/" rel="noreferrer">channels.nixos.org</a> ·
+classification is a deterministic table lookup, no LLM at query time ·
+<a href="{REPO}/blob/main/artifacts/devlog.md" rel="noreferrer">how it was built, and what it gets wrong</a>
+</footer>
 <script>
-const BLOB="https://github.com/NixOS/nixpkgs/blob/{rev}/";
-const DATA={json.dumps(compact, separators=(',', ':'))};
-const COUNTS={json.dumps(counts)};
-const ORDER={json.dumps(ordered)};
-let active=null,q="";
-const nav=document.getElementById('nav'),tbody=document.getElementById('rows'),
-      count=document.getElementById('count');
+const TABS={json.dumps(tabs, separators=(',', ':'))};
+const cache={{}};
+let chan=TABS[0].channel, active=null, q="", DATA=[], newonly=false;
+const $=id=>document.getElementById(id);
+
+function drawTabs(){{
+  $('tabs').innerHTML='';
+  TABS.forEach(t=>{{const b=document.createElement('button');
+    b.className='tab'; b.textContent=t.channel;
+    if(t.channel===chan) b.setAttribute('aria-current','true');
+    b.title=`${{t.release}} — ${{t.n.toLocaleString()}} packages`;
+    b.onclick=()=>{{if(t.channel!==chan){{chan=t.channel;active=null;load();}}}};
+    $('tabs').appendChild(b);}});
+}}
+async function load(){{
+  drawTabs();
+  if(!cache[chan]){{
+    $('count').textContent='loading…';
+    const r=await fetch(`data/${{chan}}.json`);
+    cache[chan]=(await r.json()).packages;
+  }}
+  DATA=cache[chan]; draw();
+}}
 function draw(){{
-  nav.innerHTML='';
+  const tab=TABS.find(t=>t.channel===chan);
+  const BLOB=`https://github.com/NixOS/nixpkgs/blob/${{tab.rev}}/`;
+  $('nav').innerHTML='';
   const mk=(label,n,val)=>{{const b=document.createElement('button');
     b.innerHTML=`${{label}}<span>${{n.toLocaleString()}}</span>`;
     if(active===val)b.setAttribute('aria-current','true');
-    b.onclick=()=>{{active=(active===val?null:val);draw();}};nav.appendChild(b);}};
+    b.onclick=()=>{{active=(active===val?null:val);draw();}};$('nav').appendChild(b);}};
   mk('all kinds',DATA.length,null);
-  ORDER.forEach(k=>mk(k,COUNTS[k],k));
+  Object.entries(tab.kinds).forEach(([k,n])=>mk(k,n,k));
+  $('prev').textContent=tab.prev||'previous release';
   const needle=q.toLowerCase();
-  const hits=DATA.filter(r=>(!active||r[1]===active)&&
+  const hits=DATA.filter(r=>(!active||r[1]===active)&&(!newonly||r[4])&&
       (!needle||r[0].toLowerCase().includes(needle)||r[3].toLowerCase().includes(needle)));
-  count.textContent=`${{hits.length.toLocaleString()}} package${{hits.length===1?'':'s'}}`;
-  tbody.innerHTML='';
+  $('count').textContent=`${{hits.length.toLocaleString()}} package${{hits.length===1?'':'s'}} in ${{chan}}`
+    +(tab.prev?` · ${{tab.new.toLocaleString()}} new since ${{tab.prev}}`:'');
   const frag=document.createDocumentFragment();
   hits.slice(0,600).forEach(r=>{{const tr=document.createElement('tr');
     const path=`pkgs/by-name/${{r[0].slice(0,2).toLowerCase()}}/${{r[0]}}/package.nix`;
     tr.innerHTML=`<td class="n"><a href="${{BLOB}}${{path}}" rel="noreferrer">${{r[0]}}</a></td>`+
-      `<td><span class="tag ${{r[2]==='uncertain'?'uncertain':''}}">${{r[1]}}</span></td>`+
+      `<td><span class="tag ${{r[2]==='uncertain'?'uncertain':''}}">${{r[1]}}</span>`+
+       (r[4]?` <span class="tag new">new</span>`:'')+`</td>`+
       `<td class="d">${{r[3].replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}}</td>`;
     frag.appendChild(tr);}});
-  tbody.appendChild(frag);
+  $('rows').innerHTML=''; $('rows').appendChild(frag);
   if(hits.length>600){{const tr=document.createElement('tr');
     tr.innerHTML=`<td colspan="3" class="d">… ${{(hits.length-600).toLocaleString()}} more; refine the search</td>`;
-    tbody.appendChild(tr);}}
+    $('rows').appendChild(tr);}}
 }}
-document.getElementById('q').addEventListener('input',e=>{{q=e.target.value;draw();}});
-draw();
+$('q').addEventListener('input',e=>{{q=e.target.value;draw();}});
+$('newonly').addEventListener('change',e=>{{newonly=e.target.checked;draw();}});
+load();
 </script>"""
     out.write_text(f"<!doctype html><html lang=en>{HTML_HEAD}<body>{body}</body></html>\n")
 
@@ -184,16 +233,27 @@ def main() -> None:
     ap.add_argument("--dist", type=Path, default=DIST)
     args = ap.parse_args()
 
-    rows, meta = load(args.db)
-    args.dist.mkdir(exist_ok=True)
-    write_json(rows, meta, args.dist / "categories.json")
-    write_html(rows, meta, args.dist / "index.html")
+    channels, rows, _meta = load(args.db)
+    channels = order_channels(channels)
+    (args.dist / "data").mkdir(parents=True, exist_ok=True)
 
-    for path in sorted(args.dist.iterdir()):
-        print(f"  {path.relative_to(ROOT)}  {path.stat().st_size/1024:.0f} KB")
-    print(f"\n{len(rows)} packages, kind facet only "
-          f"({GOLD_ACCURACY['overall']:.0%} measured on {GOLD_ACCURACY['n']} gold packages)")
-    print("domain facet withheld: 13.8% on gold, see README")
+    counts = {}
+    for c in channels:
+        per = {}
+        for r in rows[c["channel"]]:
+            per[r["kind"]] = per.get(r["kind"], 0) + 1
+        counts[c["channel"]] = {k: per[k] for k in KIND_ORDER if k in per}
+        write_channel_json(c, rows[c["channel"]],
+                           args.dist / "data" / f"{c['channel']}.json")
+
+    write_html(channels, counts, args.dist / "index.html")
+
+    total = sum(c["n"] for c in channels)
+    for path in sorted(args.dist.rglob("*")):
+        if path.is_file():
+            print(f"  {path.relative_to(ROOT)}  {path.stat().st_size/1024:.0f} KB")
+    print(f"\n{total:,} packages across {len(channels)} channels, kind facet only "
+          f"({GOLD_ACCURACY['overall']:.0%} on {GOLD_ACCURACY['n']} gold packages)")
 
 
 if __name__ == "__main__":

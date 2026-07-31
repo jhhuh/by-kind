@@ -299,6 +299,17 @@ def acquire_channel(channel: str, keep_json: bool) -> dict:
     dump = ROOT / "data" / f"packages.{channel}.json"
     download_channel(dump, channel)
     by_path, by_name = load_channel(dump)
+
+    # Every top-level attribute in the channel, not just the by-name ones.
+    # "New" must mean "absent from the previous release", not "absent from its
+    # by-name directory" -- otherwise a package that merely MIGRATED into
+    # by-name looks new, which is exactly the sort of wrong badge that erodes
+    # trust in the whole page.
+    attrs = subprocess.run(
+        ["jq", "-r", '.packages | keys[] | select(contains(".") | not)', str(dump)],
+        check=True, text=True, capture_output=True).stdout
+    (ROOT / "data" / f"attrs.{channel}.txt").write_text(attrs)
+
     if not keep_json:
         dump.unlink(missing_ok=True)
 

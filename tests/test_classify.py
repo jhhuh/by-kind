@@ -135,11 +135,15 @@ def test_list_homepage_does_not_break_binding():
 def test_written_rows_are_sorted_and_stable(tmp_path):
     tables = {"domain": TABLE, "kind": TABLE}
     rows = [
-        {"name": "zeta", "path": "p/z", "description": "sound", "structural": {}},
-        {"name": "alpha", "path": "p/a", "description": "movie", "structural": {}},
+        {"name": "zeta", "path": "p/z", "description": "sound",
+         "structural": {}, "channel": "nixpkgs-unstable"},
+        {"name": "alpha", "path": "p/a", "description": "movie",
+         "structural": {}, "channel": "nixpkgs-unstable"},
     ]
-    rows.sort(key=lambda r: r["name"])
+    rows.sort(key=lambda r: (r["channel"], r["name"]))
     first = classify.classify(rows, tables, "v1")
     second = classify.classify(rows, tables, "v1")
     assert first == second
-    assert [r[0] for r in first] == ["alpha", "zeta"]
+    # columns are (channel, channel_release, name, ...)
+    assert [r[0] for r in first] == ["nixpkgs-unstable"] * 2
+    assert [r[2] for r in first] == ["alpha", "zeta"]

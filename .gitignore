@@ -6,6 +6,7 @@
 data/packages*.jsonl
 data/packages*.json
 data/channels.json
+data/attrs.*.txt
 data/*.br
 data/categories.sqlite
 data/categories.json

@@ -217,3 +217,40 @@ there are no binaries to run. That reduces the landscape to:
 
 container2wasm is now the only *fully open* route to a real shell, rather than
 one pragmatic choice among several.
+
+## Which architectures actually have NARs? Only x86_64 and aarch64.
+
+Same 45-package sample, evaluated per system and checked against
+`cache.nixos.org`:
+
+| system | evaluates | cached | coverage |
+|---|---:|---:|---:|
+| x86_64-linux | — | — | ~100% (the reference) |
+| **aarch64-linux** | 43 | 41 | **95%** |
+| i686-linux | 37 | 3 | 8% |
+| **riscv64-linux** | 40 | **0** | **0%** |
+| armv7l-linux | 40 | 0 | 0% |
+
+**The riscv64 trap:** every package *evaluates* for riscv64-linux, so it looks
+supported. Hydra does not build it, so nothing is substitutable. "nixpkgs supports
+riscv64" and "riscv64 binaries exist" are different claims and only the first is
+true. Same for armv7l.
+
+### Why this closes the "try another architecture" question
+
+The two facts point in opposite directions:
+
+- **riscv64** has the *best* browser emulation — TinyEMU/JSLinux's most mature
+  target, and container2wasm's preferred path (it falls back to slower Bochs for
+  x86_64) — and **zero binaries**.
+- **aarch64** has the *binaries* at 95% and **no browser emulator**:
+  container2wasm does x86_64 and riscv64; JSLinux does x86/x86_64/riscv64; v86 and
+  CheerpX are x86-only; Blink is x86-64 by definition.
+
+**x86_64 is the only architecture scoring on both axes.** Not best on either — it
+is simply the only overlap. That retroactively justifies the path taken and rules
+out arch-switching as an escape from the fork problem.
+
+Worth revisiting if an **aarch64 WASM emulator** appears (a QEMU→WASM aarch64
+target would qualify): it would be immediately viable at 95% coverage with no
+nixpkgs-side work at all.

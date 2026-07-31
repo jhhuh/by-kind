@@ -15,26 +15,51 @@ pytestmark = pytest.mark.skipif(not (DIST / "index.html").exists(),
                                 reason="run src/emit.py first")
 
 
+def _any_channel():
+    return sorted((DIST / "data").glob("*.json"))[0]
+
+
 def test_json_ships_kind_only_and_says_so():
-    payload = json.loads((DIST / "categories.json").read_text())
+    payload = json.loads(_any_channel().read_text())
     assert payload["shipped_facet"] == "kind"
     assert "domain" in payload["withheld"]
-    sample = payload["packages"][0]
-    assert "kind" in sample
-    assert "domain" not in sample, "withheld facet must not leak into the export"
+    assert payload["columns"] == ["name", "kind", "confidence",
+                                  "description", "is_new"]
+    assert "domain" not in payload["columns"], "withheld facet must not leak"
+
+
+def test_new_flag_is_present_and_plausible():
+    """Every channel except the oldest stable diffs against a predecessor."""
+    payload = json.loads(_any_channel().read_text())
+    flags = [p[4] for p in payload["packages"]]
+    assert set(flags) <= {0, 1}
+    if payload.get("compared_to"):
+        assert 0 < sum(flags) < len(flags), "all-or-nothing new is a bug"
 
 
 def test_json_publishes_measured_accuracy_not_the_legacy_number():
     """71.3% is the in-distribution figure; 75.1% was the misleading legacy one."""
-    payload = json.loads((DIST / "categories.json").read_text())
+    payload = json.loads(_any_channel().read_text())
     assert payload["gold_accuracy"]["overall"] == pytest.approx(0.713, abs=0.01)
 
 
-def test_html_has_no_external_resource_references():
-    """A strict-CSP-style guarantee: the page must work offline."""
+def test_html_loads_nothing_from_another_origin():
+    """Data is fetched from a same-origin relative path; nothing third-party."""
     html = (DIST / "index.html").read_text()
     for marker in ("<script src=", "<link ", "@import", "url(http"):
         assert marker not in html, f"external resource: {marker}"
+    assert "fetch(`data/" in html, "per-channel data must be same-origin relative"
+
+
+def test_shell_is_small_so_first_paint_is_fast():
+    """The point of the split: the shell must not carry any package data."""
+    assert (DIST / "index.html").stat().st_size < 100_000
+
+
+def test_every_channel_has_a_data_file_and_a_tab():
+    html = (DIST / "index.html").read_text()
+    for path in (DIST / "data").glob("*.json"):
+        assert path.stem in html, f"{path.stem} has data but no tab"
 
 
 def test_html_states_the_withheld_facet():
@@ -47,11 +72,13 @@ def test_html_surfaces_uncertainty():
     assert "uncertain" in html
 
 
-def test_every_package_appears_in_the_export():
+def test_every_package_appears_in_its_channel_export():
     conn = sqlite3.connect(ROOT / "data" / "categories.sqlite")
-    n = conn.execute("SELECT COUNT(*) FROM packages").fetchone()[0]
-    payload = json.loads((DIST / "categories.json").read_text())
-    assert len(payload["packages"]) == n
+    for path in (DIST / "data").glob("*.json"):
+        payload = json.loads(path.read_text())
+        n = conn.execute("SELECT COUNT(*) FROM packages WHERE channel=?",
+                         (payload["channel"],)).fetchone()[0]
+        assert len(payload["packages"]) == n, payload["channel"]
 
 
 def test_gold_constants_match_between_cli_and_emit():

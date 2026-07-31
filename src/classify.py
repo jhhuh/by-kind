@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -32,7 +33,9 @@ OUT = ROOT / "data" / "categories.sqlite"
 
 SCHEMA = """
 CREATE TABLE packages (
-  name              TEXT PRIMARY KEY,
+  channel           TEXT NOT NULL,
+  channel_release   TEXT,
+  name              TEXT NOT NULL,
   path              TEXT NOT NULL,
   attr              TEXT,
   description       TEXT,
@@ -55,12 +58,14 @@ CREATE TABLE packages (
   top_features      TEXT,          -- JSON {facet: [[feature, weight], ...]}
   provenance        TEXT NOT NULL, -- model | llm | manual
   model_version     TEXT NOT NULL,
-  nixpkgs_rev       TEXT
+  nixpkgs_rev       TEXT,
+  is_new            INTEGER NOT NULL DEFAULT 0,  -- absent from the predecessor
+  compared_to       TEXT,                        -- which release that was
+  PRIMARY KEY (channel, name)
 );
-CREATE INDEX idx_domain ON packages(domain);
-CREATE INDEX idx_kind ON packages(kind);
-CREATE INDEX idx_facets ON packages(domain, kind);
-CREATE INDEX idx_confidence ON packages(domain_confidence, kind_confidence);
+CREATE INDEX idx_kind ON packages(channel, kind);
+CREATE INDEX idx_name ON packages(name);
+CREATE INDEX idx_confidence ON packages(channel, kind_confidence);
 
 CREATE TABLE run_meta (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -159,6 +164,7 @@ def classify(rows: list[dict], tables: dict, version: str) -> list[tuple]:
         domain = score(row, tables["domain"])
         kind = score(row, tables["kind"])
         out.append((
+            row.get("channel", "nixpkgs-unstable"), row.get("channel_release"),
             row["name"], row["path"], _text(row.get("attr")),
             _text(row.get("description")),
             _text(row.get("homepage")), json.dumps(row.get("license") or []),
@@ -171,20 +177,72 @@ def classify(rows: list[dict], tables: dict, version: str) -> list[tuple]:
             kind["label"] or "other", kind["score"], kind["margin"],
             kind["confidence"], json.dumps(kind["alternates"]),
             json.dumps({"domain": domain["features"], "kind": kind["features"]}),
-            "model", version, row.get("nixpkgs_rev"),
+            "model", version, row.get("nixpkgs_rev"), 0, None,
         ))
     return out
 
 
+STABLE = re.compile(r"^nixos-\d\d\.\d\d$")
+
+
+def predecessor(channel: str, channels: list[str]) -> str | None:
+    """The release a channel should be diffed against.
+
+    Stable releases chain: 25.05 -> 25.11 -> 26.05. Unstable channels are
+    compared against the newest stable, which is the question people actually
+    ask -- "what is in unstable that is not in the release I am running?"
+    """
+    stables = sorted(c for c in channels if STABLE.match(c))
+    if not stables:
+        return None
+    if STABLE.match(channel):
+        i = stables.index(channel)
+        return stables[i - 1] if i > 0 else None
+    return stables[-1]
+
+
+def channel_attrs(channel: str) -> set[str] | None:
+    """Every top-level attribute of a channel, if acquire recorded them."""
+    path = ROOT / "data" / f"attrs.{channel}.txt"
+    if not path.exists():
+        return None
+    return {line for line in path.read_text().split("\n") if line}
+
+
+def mark_new(conn, channels: list[str]) -> None:
+    names = {c: {r[0] for r in conn.execute(
+        "SELECT name FROM packages WHERE channel=?", (c,))} for c in channels}
+    # Prefer the full attribute set for the PREDECESSOR side of the diff.
+    full = {c: (channel_attrs(c) or names[c]) for c in channels}
+    for channel in channels:
+        prev = predecessor(channel, channels)
+        if prev is None:
+            continue
+        fresh = names[channel] - full[prev]
+        conn.executemany(
+            "UPDATE packages SET is_new=1, compared_to=? WHERE channel=? AND name=?",
+            [(prev, channel, n) for n in sorted(fresh)])
+        conn.execute("UPDATE packages SET compared_to=? WHERE channel=?",
+                     (prev, channel))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--packages", type=Path, default=PACKAGES)
+    ap.add_argument("--packages", type=Path, default=None,
+                    help="single jsonl; default is every data/packages.*.jsonl")
     ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
 
     tables, meta, version = load_model()
-    rows = [json.loads(line) for line in args.packages.read_text().splitlines()]
-    rows.sort(key=lambda r: r["name"])   # byte-stable output
+    sources = ([args.packages] if args.packages
+               else sorted((ROOT / "data").glob("packages.*.jsonl")))
+    if not sources:
+        raise SystemExit("no data/packages.*.jsonl — run src/acquire.py first")
+    rows = []
+    for src in sources:
+        rows += [json.loads(line) for line in src.read_text().splitlines()]
+    # (channel, name) is the primary key, so sort by both for byte-stable output
+    rows.sort(key=lambda r: (r.get("channel", ""), r["name"]))
 
     records = classify(rows, tables, version)
 
@@ -202,13 +260,22 @@ def main() -> None:
         ("corpus", meta.get("corpus", "")),
         ("classified_at", dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")),
         ("packages", str(len(records))),
+        ("channels", ",".join(sorted({r.get("channel", "") for r in rows}))),
     ])
+    channels = sorted({r.get("channel", "") for r in rows})
+    mark_new(conn, channels)
     conn.commit()
 
     def tally(sql):
         return conn.execute(sql).fetchall()
 
     print(f"wrote {args.out}  ({len(records)} packages, model {version})\n")
+    for channel, n, new, prev in tally(
+            "SELECT channel, COUNT(*), SUM(is_new), MAX(compared_to)"
+            " FROM packages GROUP BY 1 ORDER BY 1"):
+        tail = f"  +{new:,} new vs {prev}" if prev else ""
+        print(f"  {channel:<24}{n:>7,}{tail}")
+    print()
     for facet in ("domain", "kind"):
         dist = dict(tally(
             f"SELECT {facet}_confidence, COUNT(*) FROM packages GROUP BY 1"))

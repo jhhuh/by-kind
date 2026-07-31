@@ -21,6 +21,7 @@ python3 src/classify.py
 echo "::endgroup::"
 
 echo "::group::quality gate"
+# Evaluated against nixpkgs-unstable, the channel the gold set was labelled from.
 # Fails the build if kind accuracy on the hand-labelled gold set regresses.
 # 0.65 against a measured 0.713 leaves room for nixpkgs churn without letting a
 # real regression through silently.

@@ -46,11 +46,29 @@ marked `?` in the CLI and show their alternatives:
 | probable | 63% | 79.0% |
 | uncertain | 36% | 58.1% |
 
+## Channels
+
+Six channels are tracked, each pinned to **its own** nixpkgs revision, so the
+descriptions and the `package.nix` permalinks always agree:
+
+`nixpkgs-unstable` · `nixos-unstable` · `nixos-unstable-small` ·
+`nixos-26.05` · `nixos-25.11` · `nixos-25.05`
+
+Packages absent from the previous release are marked **new**. The diff runs
+against the predecessor's *entire attribute set*, not just its `by-name`
+directory — otherwise a package that merely migrated into `by-name` would look
+new, which removed about a third of the candidate badges.
+
+Stable releases chain (25.05 → 25.11 → 26.05); unstable channels are compared
+against the newest stable, which is the question people actually ask.
+
 ## Use it
 
 ```sh
 nix develop -c python3 src/cli.py tree            # counts per kind
 nix develop -c python3 src/cli.py ls server       # packages of one kind
+nix develop -c python3 src/cli.py ls cli-tool --new   # only what is new since the last release
+nix develop -c python3 src/cli.py --channel nixos-26.05 tree
 nix develop -c python3 src/cli.py search borg
 nix develop -c python3 src/cli.py show ripgrep    # with the evidence for the label
 nix develop -c python3 src/cli.py status          # what is shipped and how good it is

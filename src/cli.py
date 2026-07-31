@@ -5,6 +5,7 @@ Ships the `kind` facet only. `domain` is withheld (13.8% on the by-name gold set
 
     by-kind tree                    counts per kind
     by-kind ls server               packages of one kind
+    by-kind ls cli-tool --new       only what is new since the last release
     by-kind ls cli-tool --confident hide the uncertain tier
     by-kind search borg             search name and description
     by-kind show ripgrep            one package, with its evidence
@@ -24,6 +25,19 @@ DB = ROOT / "data" / "categories.sqlite"
 GOLD = {"overall": 0.713, "probable": 0.790, "uncertain": 0.581, "n": 94}
 
 
+def pick_channel(conn, requested: str | None) -> str:
+    known = [r[0] for r in conn.execute(
+        "SELECT DISTINCT channel FROM packages ORDER BY 1")]
+    if requested:
+        if requested not in known:
+            sys.exit(f"unknown channel '{requested}'. known: {', '.join(known)}")
+        return requested
+    for preferred in ("nixpkgs-unstable", "nixos-unstable"):
+        if preferred in known:
+            return preferred
+    return known[0]
+
+
 def connect(db: Path) -> sqlite3.Connection:
     if not db.exists():
         sys.exit(
@@ -37,11 +51,12 @@ def connect(db: Path) -> sqlite3.Connection:
     return conn
 
 
-def cmd_tree(conn, _args) -> None:
+def cmd_tree(conn, args) -> None:
     rows = conn.execute(
         "SELECT kind, COUNT(*) n,"
         " SUM(kind_confidence='uncertain') unsure"
-        " FROM packages GROUP BY kind ORDER BY n DESC").fetchall()
+        " FROM packages WHERE channel=? GROUP BY kind ORDER BY n DESC",
+        (args.channel,)).fetchall()
     total = sum(r["n"] for r in rows)
     print(f"{'kind':<16}{'packages':>9}{'uncertain':>11}")
     print("-" * 36)
@@ -52,10 +67,13 @@ def cmd_tree(conn, _args) -> None:
 
 
 def cmd_ls(conn, args) -> None:
-    sql = "SELECT name, kind_confidence c, description d FROM packages WHERE kind=?"
-    params = [args.kind]
+    sql = ("SELECT name, kind_confidence c, description d FROM packages"
+           " WHERE kind=? AND channel=?")
+    params = [args.kind, args.channel]
     if args.confident:
         sql += " AND kind_confidence != 'uncertain'"
+    if args.new:
+        sql += " AND is_new=1"
     sql += " ORDER BY name LIMIT ?"
     params.append(args.limit)
     rows = conn.execute(sql, params).fetchall()
@@ -71,11 +89,13 @@ def cmd_ls(conn, args) -> None:
 def cmd_search(conn, args) -> None:
     like = f"%{args.term}%"
     sql = ("SELECT name, kind, kind_confidence c, description d FROM packages"
-           " WHERE (name LIKE ? OR description LIKE ?)")
-    params = [like, like]
+           " WHERE channel=? AND (name LIKE ? OR description LIKE ?)")
+    params = [args.channel, like, like]
     if args.kind:
         sql += " AND kind=?"
         params.append(args.kind)
+    if getattr(args, "new", False):
+        sql += " AND is_new=1"
     sql += " ORDER BY name LIMIT ?"
     params.append(args.limit)
     for r in conn.execute(sql, params):
@@ -84,7 +104,8 @@ def cmd_search(conn, args) -> None:
 
 
 def cmd_show(conn, args) -> None:
-    r = conn.execute("SELECT * FROM packages WHERE name=?", (args.name,)).fetchone()
+    r = conn.execute("SELECT * FROM packages WHERE name=? AND channel=?",
+                     (args.name, args.channel)).fetchone()
     if r is None:
         sys.exit(f"no package '{args.name}' in pkgs/by-name")
     print(f"{r['name']}")
@@ -109,7 +130,12 @@ def cmd_show(conn, args) -> None:
 def cmd_status(conn, _args) -> None:
     meta = dict(conn.execute("SELECT key, value FROM run_meta").fetchall())
     total = conn.execute("SELECT COUNT(*) FROM packages").fetchone()[0]
-    print(f"packages       {total:,} from pkgs/by-name")
+    chans = conn.execute("SELECT channel, channel_release, COUNT(*)"
+                         " FROM packages GROUP BY 1 ORDER BY 1").fetchall()
+    print(f"packages       {total:,} across {len(chans)} channels")
+    for c, rel, n in chans:
+        mark = "*" if c == _args.channel else " "
+        print(f"  {mark} {c:<22}{rel or '':<36}{n:>7,}")
     print(f"model          {meta.get('model_version', '?')}")
     print(f"classified     {meta.get('classified_at', '?')}")
     print("\nSHIPPED: kind — what a package is")
@@ -128,23 +154,30 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="by-kind", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DB)
+    ap.add_argument("--channel", help="nixos/nixpkgs channel (default: unstable)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("tree").set_defaults(fn=cmd_tree)
     sub.add_parser("status").set_defaults(fn=cmd_status)
 
     p = sub.add_parser("ls"); p.add_argument("kind")
+    p.add_argument("--new", action="store_true",
+                   help="only packages absent from the previous release")
     p.add_argument("--confident", action="store_true")
     p.add_argument("--limit", type=int, default=50); p.set_defaults(fn=cmd_ls)
 
     p = sub.add_parser("search"); p.add_argument("term")
-    p.add_argument("--kind"); p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--kind")
+    p.add_argument("--new", action="store_true",
+                   help="only packages absent from the previous release"); p.add_argument("--limit", type=int, default=50)
     p.set_defaults(fn=cmd_search)
 
     p = sub.add_parser("show"); p.add_argument("name"); p.set_defaults(fn=cmd_show)
 
     args = ap.parse_args()
-    args.fn(connect(args.db), args)
+    conn = connect(args.db)
+    args.channel = pick_channel(conn, args.channel)
+    args.fn(conn, args)
 
 
 if __name__ == "__main__":

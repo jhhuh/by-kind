@@ -1,14 +1,14 @@
-"""cat-nixpkgs — browse pkgs/by-name by kind from the terminal.
+"""by-kind — browse nixpkgs pkgs/by-name by kind, from the terminal.
 
 Ships the `kind` facet only. `domain` is withheld (13.8% on the by-name gold set);
-`cat-nixpkgs status` explains why.
+`by-kind status` explains why.
 
-    cat-nixpkgs tree                    counts per kind
-    cat-nixpkgs ls server               packages of one kind
-    cat-nixpkgs ls cli-tool --confident hide the uncertain tier
-    cat-nixpkgs search borg             search name and description
-    cat-nixpkgs show ripgrep            one package, with its evidence
-    cat-nixpkgs status                  what is shipped, and how accurate
+    by-kind tree                    counts per kind
+    by-kind ls server               packages of one kind
+    by-kind ls cli-tool --confident hide the uncertain tier
+    by-kind search borg             search name and description
+    by-kind show ripgrep            one package, with its evidence
+    by-kind status                  what is shipped, and how accurate
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def cmd_show(conn, args) -> None:
     feats = json.loads(r["top_features"] or "{}").get("kind") or []
     if feats:
         print("  because      " + ", ".join(f"{f}({w:+.1f})" for f, w in feats[:4]))
-    print(f"\n  domain       withheld — see `cat-nixpkgs status`")
+    print(f"\n  domain       withheld — see `by-kind status`")
 
 
 def cmd_status(conn, _args) -> None:
@@ -125,7 +125,7 @@ def cmd_status(conn, _args) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="cat-nixpkgs", description=__doc__,
+    ap = argparse.ArgumentParser(prog="by-kind", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DB)
     sub = ap.add_subparsers(dest="cmd", required=True)

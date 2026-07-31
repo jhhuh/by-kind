@@ -1,4 +1,8 @@
-# cat-nixpkgs
+# by-kind
+
+**→ Browse it live: https://jhhuh.github.io/by-kind/**
+
+nixpkgs gives you `pkgs/by-name`. This gives you *by kind*.
 
 Reconstruct a browsable **category axis** over `pkgs/by-name/` in nixpkgs.
 

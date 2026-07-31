@@ -69,7 +69,7 @@ def write_json(rows: list[dict], meta: dict, out: Path) -> None:
 
 HTML_HEAD = """<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>cat-nixpkgs — browse pkgs/by-name by kind</title>
+<title>by-kind — browse nixpkgs pkgs/by-name by kind</title>
 <style>
 :root{--bg:#fff;--fg:#1a1a1a;--dim:#666;--line:#e3e3e3;--accent:#2d5b8e;--warn:#8a5a00}
 @media(prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e8e8e8;--dim:#9aa0a6;--line:#2c2f36;--accent:#7fb0e8;--warn:#d8a13a}}
@@ -121,7 +121,7 @@ def write_html(rows: list[dict], meta: dict, out: Path) -> None:
                 r["description"] or ""] for r in rows]
 
     body = f"""<header>
-<h1>cat-nixpkgs — {len(rows):,} packages in <code>pkgs/by-name</code></h1>
+<h1>by-kind — {len(rows):,} packages in <code>pkgs/by-name</code></h1>
 <p class="note">Classified by <strong>kind</strong> (what a package <em>is</em>).
 Measured accuracy on a 94-package hand-labelled sample: <strong>{GOLD_ACCURACY['overall']:.0%}</strong>
 overall — {GOLD_ACCURACY['probable']:.0%} for <span class="tag">probable</span>,

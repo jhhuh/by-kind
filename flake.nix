@@ -1,5 +1,5 @@
 {
-  description = "cat-nixpkgs — reconstruct a browsable category axis over pkgs/by-name";
+  description = "by-kind — a browsable category axis over nixpkgs pkgs/by-name";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

@@ -476,3 +476,52 @@ auth is missing. The labelling run itself is one command once a key exists.
 
 Estimated cost for 2,000 packages: ~40 calls, ~5k cached system tokens each,
 ~$0.10–0.30 on Haiku 4.5.
+
+---
+
+## 2026-07-31 — Stage ⑥: ship `kind`, withhold `domain`
+
+`src/emit.py`, `src/cli.py`, `tests/test_emit.py`. 57 tests pass.
+`dist/index.html` (1.9 MB, verified to contain no external resource references)
+and `dist/categories.json` (5.5 MB).
+
+**Checked `kind`'s tier calibration on gold before shipping it**, because
+`domain`'s tier scored 0/12 and shipping a badly calibrated confidence badge is
+worse than shipping no badge:
+
+| tier | domain | kind |
+|---|---:|---:|
+| confident | 0/12 = 0.0% | never fires (0.6% of corpus) |
+| probable | 11/56 = 19.6% | **49/62 = 79.0%** |
+| uncertain | 2/25 = 8.0% | **18/31 = 58.1%** |
+
+`kind`'s tiers are genuinely ordered — 79% vs 58% is real discrimination —
+whereas `domain`'s are noise in both directions. So the tiers ship for `kind`.
+
+**Did not refit thresholds on the gold set.** Fitting them there would make tier
+precision an in-sample number while looking like an improvement, and would burn
+the only in-distribution measurement the project has. Instead the *measured*
+per-tier accuracy is published verbatim in the CLI, the JSON export, and the HTML
+header, so a reader can calibrate their own trust. `confident` never firing for
+`kind` is left as-is and simply not advertised.
+
+**`domain` is withheld from every shipped artifact.** The column stays in the
+database for stage ⑤ to build on; `emit.py` and `cli.py` do not read it, and a
+test asserts it does not leak into the JSON export. `cat-nixpkgs status` and the
+HTML header both explain why rather than silently omitting it — a missing facet
+with no explanation invites someone to reintroduce it.
+
+**Published numbers are the in-distribution ones.** A test asserts the export
+carries 71.3%, not the 75.1% legacy figure. It would be easy and dishonest to
+publish the bigger number.
+
+### Known weaknesses in what shipped
+
+- `server` has only 117 packages and 95 of them are `uncertain`, which is clearly
+  too few — nixpkgs has far more servers. The `server` class had 98 training rows.
+- `build-support` (27) and `plugin` (224) are similarly thin.
+- 36% of the corpus lands in `uncertain` at 58% accuracy. That is honest but
+  weak; the CLI marks those rows `?` and shows alternatives.
+
+All three trace to the same root cause as `domain`: too few, and
+unrepresentative, training labels. Stage ⑤ addresses them together.

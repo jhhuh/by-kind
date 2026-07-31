@@ -1,6 +1,9 @@
 # cat-nixpkgs — Design
 
-**Status:** approved design, pre-implementation
+**Status:** stages ①③④⑥ implemented and shipped for `kind`; `domain` withheld
+(13.8% in-distribution). Stage ⑤ built, blocked on credentials. See README for
+current measured accuracy — several numbers in this document were superseded by
+measurement and are marked where that happened.
 **Date:** 2026-07-28
 
 ## Problem

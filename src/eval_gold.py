@@ -23,8 +23,9 @@ for line in GOLD.read_text().splitlines():
         gold[parts[0]] = (parts[1].strip(), parts[2].strip())
 
 conn = sqlite3.connect(DB)
-rows = {n: (d, k, dc, alt) for n, d, k, dc, alt in conn.execute(
-    "SELECT name, domain, kind, domain_confidence, domain_alternates FROM packages")}
+rows = {n: (d, k, dc, alt, kc, kalt) for n, d, k, dc, alt, kc, kalt in conn.execute(
+    "SELECT name, domain, kind, domain_confidence, domain_alternates,"
+    " kind_confidence, kind_alternates FROM packages")}
 
 hit_d = hit_k = hit_both = hit_d3 = n = 0
 conf_n = conf_hit = 0
@@ -32,7 +33,7 @@ misses = []
 for name, (gd, gk) in sorted(gold.items()):
     if name not in rows:
         continue
-    pd, pk, dc, alt = rows[name]
+    pd, pk, dc, alt, kc, kalt = rows[name]
     n += 1
     ok_d, ok_k = pd == gd, pk == gk
     hit_d += ok_d; hit_k += ok_k; hit_both += ok_d and ok_k
@@ -50,6 +51,21 @@ print(f"  both         : {hit_both}/{n} = {hit_both/n:.1%}")
 if conf_n:
     print(f"\n  of those marked `confident`: {conf_hit}/{conf_n} = {conf_hit/conf_n:.1%} correct"
           "   <-- the tier's promise is 95%")
+# Tier calibration per facet. The domain tier scored 0/12 on gold; kind's must
+# be checked before shipping, or the same mistake ships with a quality badge.
+print("\nTIER CALIBRATION ON GOLD (the promise is 95% for `confident`):")
+for facet, idx, cidx in (("domain", 0, 2), ("kind", 1, 4)):
+    buckets = {}
+    for name, (gd, gk) in gold.items():
+        if name not in rows: continue
+        truth = gd if facet == "domain" else gk
+        pred = rows[name][idx]; tier = rows[name][cidx]
+        b = buckets.setdefault(tier, [0, 0]); b[1] += 1; b[0] += pred == truth
+    for tier in ("confident", "probable", "uncertain", "none"):
+        if tier in buckets:
+            hit, tot = buckets[tier]
+            print(f"  {facet:<7} {tier:<11} {hit}/{tot} = {hit/tot:6.1%}")
+
 print(f"\nmost common wrong domain predictions:")
 for pred, c in Counter(p for _, _, p, _ in misses).most_common(5):
     print(f"  predicted {pred:<16} {c} times")

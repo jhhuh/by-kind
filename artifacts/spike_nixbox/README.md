@@ -124,3 +124,57 @@ So there are two honest products:
 
 For a showcase where someone clicks `ripgrep` and types `rg --version`, option 1
 may simply be the right product, and it is the cheaper one by a wide margin.
+
+## Build attempt: Blink actually compiles to WASM
+
+Went further than reading code — built it.
+
+```
+emconfigure ./configure && emmake make o//blink/blink
+  o/blink/blink.wasm    409 KB      (331 KB at -O2)
+  o/blink/blink          235 KB JS loader
+$ node o/blink/blink
+Usage: blink [-hvjemZs0L:C:] PROG [ARGS...]     ← runs
+```
+
+**The `fork` prediction is confirmed by the generated `config.h`**, not just by
+reading source. Emscripten's feature probes produce:
+
+```
+#define DISABLE_THREADS
+#define DISABLE_VFS
+                      ← HAVE_FORK absent entirely
+```
+
+So the browser build loses **fork, threads, and the VFS/overlay layer**. `blink -C`
+fails immediately with "bad blink overlays spec", which rules out the chroot
+mechanism the native spike relied on.
+
+### Executing a guest program did not work, and needs real debugging
+
+Three successive failures, each a mismatch between Blink's syscall use and
+Emscripten's shims rather than anything fundamental:
+
+| attempt | failure |
+|---|---|
+| `-sNODERAWFS=1` | `TypeError … reading 'mode'` in `___syscall_getsockopt` — Blink probes an FD, Emscripten's SOCKFS assumes a real socket |
+| + `DISABLE_SOCKETS` | `TypeError … reading 'poll'` in `___syscall_poll` — NODERAWFS bypasses the JS FS layer, so streams lack `poll` ops |
+| Emscripten FS + `--preload-file` (255 MB store baked in) | `ErrnoError errno 20` (ENOTDIR) during path resolution |
+
+Each is plausibly fixable, and the direction of travel suggests the *Emscripten
+FS* path (not `NODERAWFS`) is the right one — which is also what a browser would
+use, and what an OPFS backing would hook into. But this is now debugging someone
+else's syscall shim compatibility, not verification, so I stopped.
+
+### Honest status
+
+- **Proven:** the entire nix half. Store assembly from HTTP, closure resolution,
+  NAR parsing, per-package deltas, and a real shell — all working natively.
+- **Proven:** Blink compiles to a 331 KB WASM binary and loads.
+- **Proven:** the browser build cannot fork, so a real shell there is out.
+- **Unproven:** running even a single guest program under WASM Blink. Not shown
+  impossible — three fixable-looking errors in a row — but not achieved.
+
+Anyone picking this up should start from the Emscripten-FS build (not NODERAWFS)
+and work the ENOTDIR, since that path both matches the browser target and keeps
+the JS filesystem layer that OPFS would plug into.

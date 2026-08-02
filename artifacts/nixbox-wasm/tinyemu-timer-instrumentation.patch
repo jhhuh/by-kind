@@ -1,0 +1,56 @@
+--- riscv_machine.c.pre_timer	2026-08-03 02:33:40.370737783 +0900
++++ riscv_machine.c	2026-08-03 02:36:04.469810207 +0900
+@@ -79,6 +79,8 @@
+ #define RTC_FREQ_DIV 16 /* arbitrary, relative to CPU freq to have a
+                            10 MHz frequency */
+ 
++/* timer instrumentation */
++static uint64_t g_n_mtip, g_n_timecmp_w;
+ static uint64_t rtc_get_real_time(RISCVMachine *s)
+ {
+     struct timespec ts;
+@@ -234,10 +236,12 @@
+     assert(size_log2 == 2);
+     switch(offset) {
+     case 0x4000:
++        g_n_timecmp_w++;
+         m->timecmp = (m->timecmp & ~0xffffffff) | val;
+         riscv_cpu_reset_mip(m->cpu_state, MIP_MTIP);
+         break;
+     case 0x4004:
++        g_n_timecmp_w++;
+         m->timecmp = (m->timecmp & 0xffffffff) | ((uint64_t)val << 32);
+         riscv_cpu_reset_mip(m->cpu_state, MIP_MTIP);
+         break;
+@@ -1013,11 +1017,30 @@
+     RISCVMachine *m = (RISCVMachine *)s1;
+     RISCVCPUState *s = m->cpu_state;
+     int64_t delay1;
+-    
++    {
++        static uint64_t next_dump;
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        uint64_t now = (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++        if (now >= next_dump) {
++            if (next_dump != 0)
++                fprintf(stderr, "TIMERSTAT t=%llu mtip=%llu timecmp_w=%llu "
++                        "powerdown=%d timecmp=%llu now=%llu\n",
++                        (unsigned long long)now,
++                        (unsigned long long)g_n_mtip,
++                        (unsigned long long)g_n_timecmp_w,
++                        (int)riscv_cpu_get_power_down(s),
++                        (unsigned long long)m->timecmp,
++                        (unsigned long long)rtc_get_time(m));
++            next_dump = now + 5000;
++        }
++    }
++
+     /* wait for an event: the only asynchronous event is the RTC timer */
+     if (!(riscv_cpu_get_mip(s) & MIP_MTIP)) {
+         delay1 = m->timecmp - rtc_get_time(m);
+         if (delay1 <= 0) {
++            g_n_mtip++;
+             riscv_cpu_set_mip(s, MIP_MTIP);
+             delay = 0;
+         } else {

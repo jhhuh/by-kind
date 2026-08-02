@@ -403,10 +403,39 @@ under 0.5 s wall (below my polling granularity), 6.12 does not complete in 360 s
 is real and larger than reported — at least 700× — but the original numbers were not
 measuring what I claimed.
 
-The mechanism is most likely a timer interrupt storm: modern Linux drives high-resolution
-timers and NO_HZ through SBI `set_timer`, and TinyEMU's `timecmp` handling dates from
-2018. Confirming that means counting timer interrupts, which is the next counter to add.
-It is a fourth bug in the same family as the other three.
+### Not a timer storm — the opposite
+
+Counted timer interrupts and `timecmp` programming
+([`nixbox-wasm/tinyemu-timer-instrumentation.patch`](nixbox-wasm/tinyemu-timer-instrumentation.patch)),
+sampled every 5 s at an idle prompt:
+
+```
+                per 5 s window
+4.15   mtip +500  (100 Hz tick)    timecmp_w +1000   powerdown=1
+6.12   mtip  +26  (~5 Hz, NO_HZ)   timecmp_w  +178   powerdown=1
+```
+
+**6.12 fires twenty times *fewer* timer interrupts**, which is exactly right for a
+tickless kernel, and both report the CPU reaching WFI. TinyEMU's WFI handling is also
+correct — it sets `power_down_flag` and leaves the interpreter, so an idle guest should
+cost nothing.
+
+So the storm hypothesis is wrong, and so was the MMU one. What the numbers actually say
+is that the cost is **per wakeup**, not per interrupt:
+
+```
+4.15    40,000,578 insn / 4500 wakeups =     8,889 instructions per timer event
+6.12   220,041,906 insn /  234 wakeups =   940,350 instructions per timer event
+```
+
+Roughly **100× more work every time the guest wakes up**. Fewer, far more expensive
+wakeups. That is a real and precisely-bounded observation, and it is where the next
+investigation should start — but the cause is not yet identified, and I have now had two
+plausible-sounding hypotheses (page-walk thrashing, timer storm) disproven by
+measurement, so I am not going to offer a third without data behind it.
+
+What is established: the slowdown is not the MMU, not interrupt frequency, and not the
+idle path failing. It is whatever 6.12 does on each wakeup.
 
 ### Where the size work landed
 

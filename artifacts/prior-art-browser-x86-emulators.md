@@ -89,6 +89,40 @@ irrevocably GPLv2, which an MIT tree cannot absorb.
 Also note the published interface is structurally 32-bit — `uint32_t` register values,
 `X86_CPU_REG_EIP`, eight GPRs, 32-bit segment bases. There is nowhere to put long mode.
 
+### Confirmed by building it: no x86 guest at either bitness
+
+The obvious follow-up is whether the *32-bit* emulator — the one Bellard does ship as a
+compiled `x86emu-wasm.wasm` — can be rebuilt from source. It cannot. Built from the
+released tarball and run against the demo's own configs:
+
+```console
+$ make CONFIG_FS_NET= CONFIG_SDL=          # compiles and links cleanly,
+                                           # including x86_machine.o ide.o ps2.o vga.o
+
+$ ./temu root-x86.cfg
+KVM not available
+x86 emulator is not supported              # <- x86_cpu_init stub, exit(1)
+
+$ ./temu root-riscv64.cfg                  # control: same binary
+[    0.164421] NET: Registered protocol family 17
+[    0.164656] 9pnet: Installing 9P2000 support     # boots Linux
+```
+
+The riscv64 control rules out a broken build. `CONFIG_X86EMU=y` compiles fine; the
+failure is purely the runtime stub.
+
+The emscripten build system does not even attempt x86:
+
+```make
+PROGS=js/riscvemu32.js js/riscvemu32-wasm.js js/riscvemu64.js js/riscvemu64-wasm.js
+```
+
+So **`x86emu-wasm.wasm` (369 KB, 32-bit) and `x86_64emu-wasm.wasm` (1.5 MB) were both
+built from a private tree.** The x86 CPU has never been released in any form except as
+compiled binaries, at either bitness. What the public source provides is everything
+around it: the complete PC machine, IDE, PS/2, VGA, PCI, VirtIO, and the vfsync
+network filesystem.
+
 ### TEMU is TinyEMU
 
 Same project; `temu` is the binary name (`Makefile`: `PROGS+= temu$(EXE)`), and the

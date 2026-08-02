@@ -214,7 +214,9 @@ and just as silently.
 | `binfmt_misc` present, mountable, registers | **done** |
 | 9p usable | **done** with `msize=8192` |
 | implement the `time` CSR | **done**, second patch |
-| run an x86_64 binary transparently | **done** |
+| run an x86_64 binary transparently | **done** on 4.15 |
+| 9p usable at a workable `msize` | **done**, third patch (ring 16 → 256) |
+| x86_64 emulation practical on 6.12 | **no** — >370 s vs 1 s on 4.15, undiagnosed |
 | kernel small enough to ship | **not started** — 44.6 MB vs 3.98 MB |
 
 What binfmt adds over the 4.15 result is transparency, and it is not cosmetic: without it
@@ -300,10 +302,76 @@ mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=loose /dev/root 
 Anything above the small `msize` puts v9fs on its zero-copy path, which TinyEMU's 2019
 virtio-9p cannot service. So `msize=8192` is forced, and the round-trip count with it.
 
-**This is the next thing to fix in TinyEMU**, and it is a third bug in the same family as
-the other two: the emulator's virtio implementation predates what modern guests expect.
-Fixing it would turn a 200-second first exec into something usable, and unlike the size
-work it is not optional — 200 s per cold start is not a product.
+### Fixed: the ring was 16 descriptors
+
+The cause was one constant:
+
+```c
+#define MAX_QUEUE_NUM 16
+```
+
+Sixteen descriptors per virtqueue, and `VRING_DESC_F_INDIRECT` is **defined but never
+used** — TinyEMU has no indirect-descriptor support, only `VRING_DESC_F_NEXT` chain
+walking. Linux's `p9_virtio_zc_request` builds a scatter-gather list with one entry per
+page of the user buffer, so anything past a tiny `msize` overruns the ring and
+`virtqueue_add_split` fails.
+
+Nothing is sized by that constant — the rings live in driver-allocated guest memory, and
+`MAX_QUEUE` (8) is the queue *count*. So raising it to 256 is a one-line change
+([`nixbox-wasm/tinyemu-virtqueue-size.patch`](nixbox-wasm/tinyemu-virtqueue-size.patch));
+it only has to stay a power of two, since `qs->num` is used as a `(num - 1)` mask.
+
+The effect is large:
+
+```
+msize=131072 mount        →  MOUNT_BIG_OK, no splat, ls works
+qemu-x86_64 --version     →  1 second   (was ~200 s at msize=8192)
+```
+
+Loading a 3.76 MB binary over 9p went from about 200 seconds to one.
+
+### And a performance bug I had introduced
+
+While measuring the above, the *emulated* path was still slow. Cause: my `time` CSR
+implementation called the machine's time source on every `rdtime`, and that source is
+
+```c
+static uint64_t rtc_get_real_time(RISCVMachine *s) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+```
+
+— a host syscall per guest instruction, in a path the Linux riscv vDSO hits for every
+`clock_gettime()`. The patch now caches the value and refreshes at most once every 1024
+instructions. It stays monotonic because the underlying clock is, and a spin-wait still
+makes progress because `insn_counter` advances.
+
+### Newly found, not fixed: x86_64 emulation is pathologically slow on 6.12
+
+With both fixes in, the same measurement isolates a third problem that is neither 9p nor
+binfmt:
+
+```
+                                      4.15 kernel   6.12 kernel
+qemu-x86_64 /mnt/busybox true            1 s         > 370 s
+```
+
+Same emulator binary, same `qemu-x86_64`, same busybox, same `msize=131072` mount, direct
+invocation with no binfmt involved. On 4.15 it is a second; on 6.12 it had not completed
+after six minutes.
+
+That is not "slower", it is pathological, and it means **the transparent-execution result
+is only practical on the 4.15 guest today**. Candidates, none verified:
+
+- TinyEMU advertises `mmu-type = riscv,sv48`; 4.15-era riscv Linux used sv39. A 4-level
+  software page walk costs more per TLB miss, but not 300×.
+- `qemu-user` reserves a large contiguous guest address space; if 6.12 places or faults
+  that differently, the emulated MMU could thrash.
+- Something in 6.12's mmap or transparent-hugepage behaviour.
+
+The next step is to instrument rather than guess — TinyEMU can count TLB misses and page
+walks, and comparing those between the two kernels for the same workload would identify
+the mechanism directly.
 
 ### Where the size work landed
 

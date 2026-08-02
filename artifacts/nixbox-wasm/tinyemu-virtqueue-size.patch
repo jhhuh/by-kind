@@ -1,0 +1,16 @@
+--- virtio.c.orig	2026-08-02 21:50:49.667419434 +0900
++++ virtio.c	2026-08-02 21:50:49.681419311 +0900
+@@ -93,7 +93,12 @@
+ 
+ #define MAX_QUEUE 8
+ #define MAX_CONFIG_SPACE_SIZE 256
+-#define MAX_QUEUE_NUM 16
++/* Ring size. Linux's v9fs zero-copy path (p9_virtio_zc_request) builds a
++   scatter-gather list with one entry per page of the user buffer, and TinyEMU
++   has no VRING_DESC_F_INDIRECT support, so the ring length is a hard cap on
++   request size. At 16 anything above a tiny msize fails in virtqueue_add_split
++   and v9fs splats. Must stay a power of two: qs->num is used as (num - 1) mask. */
++#define MAX_QUEUE_NUM 256
+ 
+ typedef struct {
+     uint32_t ready; /* 0 or 1 */

@@ -1,0 +1,27 @@
+--- riscv_machine.c.orig	2026-08-02 18:46:30.076980802 +0900
++++ riscv_machine.c	2026-08-02 18:46:30.090980707 +0900
+@@ -623,9 +623,21 @@
+     misa = riscv_cpu_get_misa(m->cpu_state);
+     q = isa_string;
+     q += snprintf(isa_string, sizeof(isa_string), "rv%d", max_xlen);
+-    for(i = 0; i < 26; i++) {
+-        if (misa & (1 << i))
+-            *q++ = 'a' + i;
++    /* Linux requires the canonical ISA order: riscv_early_of_processor_hartid()
++       does strncasecmp(isa, "rv64ima", 7) and rejects the CPU node otherwise.
++       Emitting MISA bits alphabetically yields "rv64acdfim" and the kernel then
++       BUG_ON(!found_boot_cpu) in setup_smp(). */
++    {
++        static const char canonical[] = "imafdqlcbjtpvn";
++        const char *cp;
++        for (cp = canonical; *cp; cp++) {
++            if (misa & (1 << (*cp - 'a')))
++                *q++ = *cp;
++        }
++        for(i = 0; i < 26; i++) {
++            if ((misa & (1 << i)) && !strchr(canonical, 'a' + i))
++                *q++ = 'a' + i;
++        }
+     }
+     *q = '\0';
+     fdt_prop_str(s, "riscv,isa", isa_string);

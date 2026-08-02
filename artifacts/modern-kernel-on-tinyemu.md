@@ -221,6 +221,53 @@ What binfmt adds over the 4.15 result is transparency, and it is not cosmetic: w
 an x86_64 process that execs another x86_64 binary fails, so nothing beyond a single
 command works. With it, a shell can mix architectures on one `PATH` without wrappers.
 
-The remaining work is size. A 44.6 MB `Image` cannot ship next to a 155 KB emulator, so a
-minimal kernel config is the next task — and now that the two TinyEMU bugs are fixed, it
-is the only thing between this and a browser artifact.
+## Both patches applied to the wasm build
+
+Rebuilt `temu.wasm` with the ISA-string and time-CSR patches: **159,877 bytes** (was
+159,193). Boot is unchanged at **574 ms**, and the nested stack still works in wasm:
+
+```
+/ # /mnt/qemu-x86_64 /mnt/busybox echo WASM_NESTED_STILL_OK
+WASM_NESTED_STILL_OK
+/ # /mnt/qemu-x86_64 /mnt/busybox uname -m
+x86_64
+```
+
+## Shrinking the kernel: 44.6 MB → 15.6 MB, not finished
+
+nixpkgs' `pkgsCross.riscv64.linux` starts from the NixOS config. Starting instead from
+the kernel's own riscv `defconfig` and stripping what a TinyEMU guest cannot reach —
+[`nixbox-wasm/riscv64-kernel-minimal.nix`](nixbox-wasm/riscv64-kernel-minimal.nix):
+
+```
+nixpkgs default        44,633,088
+first strip            19,947,520
+tightened strip        15,569,408 raw   4,210,138 gz    794 options enabled
+Bellard's (4.15)        3,979,556 raw   1,912,216 gz
+```
+
+It also boots roughly 3× faster — `Run /bin/sh as init process` at **1.12 s** against
+3.5 s for the fat kernel, and `console=hvc0` works without `earlycon`.
+
+Three config traps found the hard way:
+
+- The 9p filesystem symbol is **`9P_FS`**, not `V9FS_FS`. My first minimal build had
+  `NET_9P` (the protocol) but no filesystem driver, so `mount -t 9p` could never work.
+- **`HVC_RISCV_SBI` must stay off.** Enabling it makes the SBI console `hvc0`, and
+  TinyEMU's SBI console is output-only — the guest printed fine but accepted no input.
+  `SERIAL_EARLYCON_RISCV_SBI` alone gives early output without claiming `hvc0`, leaving
+  it to virtio-console, which is what Bellard's configs rely on.
+- nixpkgs' `linuxManualConfig` install phase runs `modules_install`, which fails with
+  `CONFIG_MODULES=n`. Building the kernel directly and taking `arch/riscv/boot/Image` is
+  simpler. Also `scripts/config` has a `/usr/bin/env` shebang the nix sandbox lacks, so
+  invoke it as `bash scripts/config`.
+
+**Unresolved:** on the minimal kernel the guest boots, mounts 9p and registers binfmt
+(`REGISTER_OK`), but executing an x86_64 binary then hangs — no output after 200 s, where
+the same script on the full-config kernel returns promptly. Something in the aggressive
+strip list is needed by `qemu-user` and a config bisect will find it. The transparent
+execution result above stands on the full-config kernel; it has not been reproduced on
+the minimal one.
+
+So the size work is most of the way there and the last step is ordinary bisection, not a
+new problem.

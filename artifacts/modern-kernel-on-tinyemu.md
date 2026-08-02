@@ -262,12 +262,51 @@ Three config traps found the hard way:
   simpler. Also `scripts/config` has a `/usr/bin/env` shebang the nix sandbox lacks, so
   invoke it as `bash scripts/config`.
 
-**Unresolved:** on the minimal kernel the guest boots, mounts 9p and registers binfmt
-(`REGISTER_OK`), but executing an x86_64 binary then hangs — no output after 200 s, where
-the same script on the full-config kernel returns promptly. Something in the aggressive
-strip list is needed by `qemu-user` and a config bisect will find it. The transparent
-execution result above stands on the full-config kernel; it has not been reproduced on
-the minimal one.
+### The bisect: there was no config bug
 
-So the size work is most of the way there and the last step is ordinary bisection, not a
-new problem.
+I reported the minimal kernel as hanging on x86_64 exec. That was wrong, and the bisect
+is what proved it. Using [`nixbox-wasm/bisect-test.sh`](nixbox-wasm/bisect-test.sh),
+which boots a candidate kernel, mounts 9p, registers binfmt and runs one x86_64 command:
+
+```
+PASS  full-nixpkgs-config              (Image 44,633,088)
+PASS  base-only                        (Image 19,947,520)
+PASS  base+extraA (SoC/drivers)        (Image 17,701,888)
+PASS  base+extraB (net/fs/misc)        (Image 19,912,192)
+PASS  full minimal (base+extraA+extraB)(Image 15,569,408)
+```
+
+Every configuration passes, including the one I had called broken. **The failure was my
+test, not the kernel** — the first transparent exec takes roughly 200 seconds, and I had
+allowed 200 in one run and chained two x86_64 commands into a single window in another.
+The harness allows 280 and passes consistently.
+
+Worth stating plainly: I diagnosed a regression that did not exist, and would have spent
+a day bisecting for a cause that was never there had the first bisect step not passed.
+
+### The real problem is 9p throughput
+
+That ~200 s is genuine and it is the thing worth fixing. Loading a 3.76 MB interpreter
+plus a 1 MB binary over 9p at `msize=8192` is roughly 600 round trips, each a virtio
+transaction under emulation.
+
+The obvious lever does not work:
+
+```
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=loose /dev/root /mnt
+  → p9_virtio_zc_request+0x1f0  … p9_client_readdir … splat
+```
+
+Anything above the small `msize` puts v9fs on its zero-copy path, which TinyEMU's 2019
+virtio-9p cannot service. So `msize=8192` is forced, and the round-trip count with it.
+
+**This is the next thing to fix in TinyEMU**, and it is a third bug in the same family as
+the other two: the emulator's virtio implementation predates what modern guests expect.
+Fixing it would turn a 200-second first exec into something usable, and unlike the size
+work it is not optional — 200 s per cold start is not a product.
+
+### Where the size work landed
+
+15.6 MB raw, 4.2 MB gzipped, against Bellard's 3.98 MB / 1.91 MB. Roughly 2.2× on the
+gzipped figure for a kernel seven years newer, with binfmt_misc, 9p and virtio. Good
+enough that kernel size is no longer the limiting factor — 9p throughput is.

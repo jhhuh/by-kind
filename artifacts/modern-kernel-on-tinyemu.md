@@ -369,9 +369,44 @@ is only practical on the 4.15 guest today**. Candidates, none verified:
   that differently, the emulated MMU could thrash.
 - Something in 6.12's mmap or transparent-hugepage behaviour.
 
-The next step is to instrument rather than guess — TinyEMU can count TLB misses and page
-walks, and comparing those between the two kernels for the same workload would identify
-the mechanism directly.
+### Instrumented, and it is not the MMU — the guest never idles
+
+Added counters for page walks, TLB fills and both flush paths
+([`nixbox-wasm/tinyemu-tlb-instrumentation.patch`](nixbox-wasm/tinyemu-tlb-instrumentation.patch)),
+dumping every 20M instructions. The answer was visible before the workload even started:
+
+```
+6.12, sitting at a shell prompt, no command running
+  insn= 40,003,534  walk=56,979   flush_all=846   flush_va=622
+  insn=220,043,591  walk=217,657  flush_all=2549  flush_va=680
+```
+
+180 million instructions while idle, with `flush_va` frozen. Measured directly — 45
+seconds idle at a prompt, nothing running:
+
+```
+4.15               40,000,578 instructions
+6.12 minimal      220,041,906   (5.5x)
+6.12 fat config 1,080,341,145   (27x)
+```
+
+**It is not the config.** Both 6.12 builds spin and the stock nixpkgs config is the worst
+of the three; my minimal config happens to reduce the burn 5×. On 4.15 the guest reaches
+WFI and TinyEMU powers the CPU down, so `insn_counter` stops. On 6.12 it never settles,
+and every wall-clock second goes to spinning rather than to the workload. That is what
+starves `qemu-user`, and it is why the page-walk rate looked unremarkable: the MMU was
+never the problem.
+
+**A measurement correction.** The earlier "1 s vs 370 s" came from `date +%s` *inside the
+guest*, which is guest clock, not wall time. Re-measured from outside: 4.15 completes in
+under 0.5 s wall (below my polling granularity), 6.12 does not complete in 360 s. The gap
+is real and larger than reported — at least 700× — but the original numbers were not
+measuring what I claimed.
+
+The mechanism is most likely a timer interrupt storm: modern Linux drives high-resolution
+timers and NO_HZ through SBI `set_timer`, and TinyEMU's `timecmp` handling dates from
+2018. Confirming that means counting timer interrupts, which is the next counter to add.
+It is a fourth bug in the same family as the other three.
 
 ### Where the size work landed
 

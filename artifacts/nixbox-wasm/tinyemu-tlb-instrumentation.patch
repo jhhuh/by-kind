@@ -1,0 +1,92 @@
+--- riscv_cpu_priv.h.pre_instr	2026-08-03 01:40:45.446202767 +0900
++++ riscv_cpu_priv.h	2026-08-03 01:40:45.460202635 +0900
+@@ -242,6 +242,11 @@
+     uint64_t time_cache;
+     uint64_t time_cache_next;
+ 
++    /* instrumentation */
++    uint64_t n_page_walk, n_flush_all, n_flush_vaddr;
++    uint64_t n_miss_read, n_miss_write, n_miss_code;
++    uint64_t stats_next;
++
+     TLBEntry tlb_read[TLB_SIZE];
+     TLBEntry tlb_write[TLB_SIZE];
+     TLBEntry tlb_code[TLB_SIZE];
+--- riscv_cpu.c.pre_instr	2026-08-03 01:40:45.445202777 +0900
++++ riscv_cpu.c	2026-08-03 01:40:45.461202626 +0900
+@@ -189,6 +189,7 @@
+                          target_ulong *ppaddr, target_ulong vaddr,
+                          int access)
+ {
++    s->n_page_walk++;
+     int mode, levels, pte_bits, pte_idx, pte_mask, pte_size_log2, xwr, priv;
+     int need_write, vaddr_shift, i, pte_addr_bits;
+     target_ulong pte_addr, pte, vaddr_mask, paddr;
+@@ -383,6 +384,7 @@
+         } else if (pr->is_ram) {
+             tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+             ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++            s->n_miss_read++;
+             s->tlb_read[tlb_idx].vaddr = addr & ~PG_MASK;
+             s->tlb_read[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+             switch(size_log2) {
+@@ -470,6 +472,7 @@
+             phys_mem_set_dirty_bit(pr, paddr - pr->addr);
+             tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+             ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++            s->n_miss_write++;
+             s->tlb_write[tlb_idx].vaddr = addr & ~PG_MASK;
+             s->tlb_write[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+             switch(size_log2) {
+@@ -559,6 +562,7 @@
+     }
+     tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+     ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++    s->n_miss_code++;
+     s->tlb_code[tlb_idx].vaddr = addr & ~PG_MASK;
+     s->tlb_code[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+     *pptr = ptr;
+@@ -597,11 +601,13 @@
+ 
+ static void tlb_flush_all(RISCVCPUState *s)
+ {
++    s->n_flush_all++;
+     tlb_init(s);
+ }
+ 
+ static void tlb_flush_vaddr(RISCVCPUState *s, target_ulong vaddr)
+ {
++    s->n_flush_vaddr++;
+     tlb_flush_all(s);
+ }
+ 
+@@ -1277,8 +1283,29 @@
+ #include "riscv_cpu_template.h"
+ #endif
+ 
++#define STATS_EVERY 20000000ULL
++
++static void glue(riscv_cpu_dump_stats, MAX_XLEN)(RISCVCPUState *s)
++{
++    fprintf(stderr,
++            "TLBSTAT insn=%llu walk=%llu flush_all=%llu flush_va=%llu "
++            "miss_r=%llu miss_w=%llu miss_c=%llu\n",
++            (unsigned long long)s->insn_counter,
++            (unsigned long long)s->n_page_walk,
++            (unsigned long long)s->n_flush_all,
++            (unsigned long long)s->n_flush_vaddr,
++            (unsigned long long)s->n_miss_read,
++            (unsigned long long)s->n_miss_write,
++            (unsigned long long)s->n_miss_code);
++}
++
+ static void glue(riscv_cpu_interp, MAX_XLEN)(RISCVCPUState *s, int n_cycles)
+ {
++    if (s->insn_counter >= s->stats_next) {
++        if (s->stats_next != 0)
++            glue(riscv_cpu_dump_stats, MAX_XLEN)(s);
++        s->stats_next = s->insn_counter + STATS_EVERY;
++    }
+ #ifdef USE_GLOBAL_STATE
+     s = &riscv_cpu_global_state;
+ #endif

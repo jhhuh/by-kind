@@ -282,6 +282,98 @@ Artifact size, measured: `qemu-system-x86_64.wasm` ships at 40,799,480 bytes of 
 and `llvm.*` custom sections gives 12,390,476 bytes / 3,181,907 gzipped, and both
 versions compile to identical module shapes (112 exports, 119 imports).
 
+## How much effort is a 64-bit CPU we control?
+
+### The original 2011 JSLinux, for calibration
+
+Bellard's first JSLinux (2011) was written entirely in JavaScript. The files survive in
+the [Wayback Machine](https://web.archive.org/web/2011/http://bellard.org/jslinux/) —
+`cpux86.js`, `cpux86-ta.js` (typed arrays), later `cpux86-std.js`.
+
+**We cannot use it.** The header is explicit, and stronger than the unclear terms on the
+wasm binaries:
+
+```js
+/*
+   PC Emulator
+   Copyright (c) 2011 Fabrice Bellard
+
+   Redistribution or commercial use is prohibited without the author's permission.
+*/
+```
+
+But as a size calibration it is valuable. Beautified, `cpux86-ta.js` is **7,045 lines /
+192 functions**, and it implements TLB, CPL, segment registers, CR0–CR4, GDT and IDT —
+a real protected-mode 486 with paging, enough to boot Linux 2.6.20.
+
+```
+Bellard 2011 JSLinux      7,045 lines JS     32-bit 486, paging, interpreter
+v86                      34,710 lines Rust   32-bit, more complete, + JIT
+Bochs x86-64-v1 subset   ~92,000 lines C++   x86_64, SSE, MSRs, APIC, complete
+```
+
+So the *floor* for "an x86 CPU that boots Linux" is single-digit thousands of lines.
+Bochs is large because it is complete and modern, not because the task is inherently
+that big.
+
+(`linuxstart-*.tar.gz`, the guest-side bootstrap — `linuxstart.c`, `libc.c`,
+`linuxstart_head.S`, a 2.6.20 config and patch — was published separately and is a
+different artifact from the emulator.)
+
+### The maintainer's own estimate
+
+v86's [issue #648, "Tips for implementing x86_64 support"](https://github.com/copy/v86/issues/648),
+answered by `copy` (the maintainer) on 2022-05-06:
+
+> **Heads-up: This is probably a 3-6 month project (full-time).**
+>
+> I'd suggest starting with disabling the jit, because that's a complex project by itself.
+>
+> - Add support for switching to long mode
+> - Extend the instruction decoder generator (`gen/generate_interpreter.js`), note that
+>   some regular instructions (e.g. the brilliant single-byte `inc esp` instruction)
+>   become prefixes
+> - Add support for 64-bit paging (see PR #599 for an example of adding a new paging
+>   mode) — probably requires adding support for NX pages, i.e. memory access from eip
+>   need an extra check
+> - Make register 64 bits wide (existing instructions might need special care; for
+>   example, `mov eax, ebx` clears the upper bits of `rax`)
+> - Make 64-bit variants of all instructions
+
+[Issue #133, "x86_64 support"](https://github.com/copy/v86/issues/133), has been open
+since 2017: *"It would be nice to have, but it's a huge project and I won't find enough
+time any time soon. I'll leave this open, if someone wants to work on this I can help
+you get started."*
+
+This is the **optimistic** figure: a maintainer estimating work on his own codebase,
+which already has a decoder generator, a paging abstraction with a precedent PR, and a
+complete 32-bit protected-mode implementation to extend. Starting from TinyEMU's empty
+stub would be worse.
+
+### Summary of routes
+
+| route to a 64-bit CPU we control | effort | basis |
+|---|---|---|
+| extend **v86** to x86_64 | **3–6 months full-time** | maintainer, v86 #648 |
+| graft **Bochs** behind `x86_cpu.h` | 2–6 weeks | estimate; impedance is the risk |
+| write `x86_cpu_interp` from scratch | ≥ 6 months | inference; 2011 JSLinux was 7,045 lines for a *486* |
+| use **qemu-wasm** as-is | working today | measured |
+
+On the Bochs graft: it is the only route measured in weeks, and it buys the *slowest*
+emulator (FOSDEM slide 16: Bochs ~40 vs QEMU MTTCG ~7.5). It also buys little, because
+**Bochs-in-wasm running x86_64 Linux already exists** — it is container2wasm's default
+x86_64 backend, which is why ktock forked and ported it. The graft would swap Bochs'
+own machine for TinyEMU's machine plus `fs_net.c`, and nothing else.
+
+QEMU is the wrong donor for an interpreter: its x86 execution *is* TCG
+(`translate.c` emits IR, it does not execute), so reusing it means bringing TCG, the
+translation-block cache and the softmmu. Its helpers (`seg_helper.c` 2,534,
+`fpu_helper.c` 3,316, `ops_sse.h` 2,672) are liftable in principle but are written
+against `CPUX86State` and TCG conventions, and the decoder and dispatch loop — the bulk
+— would still have to be written. QEMU's one standalone interpreter,
+`target/i386/emulate/x86_{decode,emu}.c` (2,192 + 1,420 lines, used by the macOS HVF
+accelerator), is deliberately partial: only the instructions a hypervisor traps on.
+
 ## Open questions
 
 1. Can qemu-wasm be rebuilt from source? `create-images.sh` pins **emsdk 3.1.50** with

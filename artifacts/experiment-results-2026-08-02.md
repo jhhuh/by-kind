@@ -71,6 +71,26 @@ within 0.5 ms):
 
 So the emulator is the expensive layer; qemu-user adds comparatively little.
 
+### The same measurement inside wasm
+
+The identical 16 MB workload, with TinyEMU itself running as wasm under node:
+
+```
+                        native temu    wasm temu    wasm/native
+riscv64 md5sum             1.21 s        1.41 s        1.17×
+qemu-user startup          0.22 s        0.26 s
+x86_64 md5sum              5.32 s        6.40 s        1.20×
+                        ────────────────────────────
+translation cost           4.21×         4.35×
+```
+
+Same digest (`2c7ab85a…`) in all four runs. Two things fall out:
+
+- **The qemu-user layer costs ~4.3× regardless of what hosts it.** Expected, since it is
+  the same code doing the same work, but worth having measured rather than assumed.
+- **Wasm hosting costs only ~1.2× on compute.** End to end against native x86_64 on the
+  host that is **256×**, running unmodified binaries.
+
 ### Notes
 
 - `binfmt_misc` is **not** in the 4.15 guest kernel (`/proc/sys/fs/binfmt_misc` absent).
@@ -211,12 +231,84 @@ native riscv64 and responds in 3.3 ms.
 which means `fs_net.c` is ours to modify, and the snapshot work, if ever wanted, is
 available rather than blocked.
 
+---
+
+## 4. The nested stack runs inside wasm
+
+Both halves, together. `build_filelist` turns a directory into the vfsync tree that
+`fs_net.c` expects:
+
+```
+fsroot/head                     Version/Revision/NextFileID/FSSize/RootID
+fsroot/files/0000000000000001   root listing (RootID = 1)
+fsroot/files/0000000000000002   qemu-x86_64   3,759,784
+fsroot/files/0000000000000003   busybox       1,038,696
+```
+
+and the listing is exactly the format `build_filelist.c` prints — mode, uid, gid, size,
+mtime, name, file_id, terminated by `.`:
+
+```
+100755 1000 1000 3759784 1785658521.9676038 qemu-x86_64 2
+100755 1000 1000 1038696 1785658521.9676038 busybox 3
+.
+```
+
+Added as `fs0: { file: "http://local/fsroot" }`, mounted in the guest, and run:
+
+```
+/ # mount -t 9p /dev/root /mnt
+/ # /mnt/qemu-x86_64 /mnt/busybox echo NESTED_IN_WASM_OK
+NESTED_IN_WASM_OK
+/ # /mnt/qemu-x86_64 /mnt/busybox uname -m
+x86_64
+```
+
+Four levels: node/V8 → wasm → TinyEMU's riscv64 interpreter → riscv64 Linux → a 3.76 MB
+riscv64 binary fetched lazily over vfsync 9p → x86_64 code.
+
+**`uname -m` reports `x86_64` with no kernel patching**, because qemu-user overwrites the
+field in its syscall layer (`linux-user/syscall.c`, `UNAME_MACHINE "x86_64"`). The
+disguise the design wanted is free.
+
+One shim fix was needed: `fs_net.c` appends `?nocache=<timestamp>` to every URL, so the
+harness must strip query strings.
+
+### This is *without* binfmt_misc
+
+Every invocation passed the x86_64 binary as an argument to the emulator. `binfmt_misc`
+is absent from the 4.15 guest kernel. It would change nothing about performance — the
+same qemu-user does the same work — but it is **required for a real session**: without it,
+an x86_64 process that forks and execs another x86_64 binary fails, because the kernel
+cannot identify the ELF. Explicit invocation only wraps the outermost process.
+
+---
+
+## A correction
+
+An earlier draft reported the native TinyEMU boot as "~25 ms wall clock". That was wrong:
+it was `4.0256 s` total against a deliberate `4 s` sleep, so it measured **process spawn
+overhead**, not boot. The boot happened inside the sleep window and was never timed.
+
+Measured properly, spawning under a pty and timestamping the first prompt:
+
+```
+native temu → shell prompt:  301.2 / 290.4 / 280.8 ms   (mean 290.8)
+wasm temu → shell prompt:    558–584 ms                  (six runs)
+```
+
+**Wasm is ~2.0× native on boot**, and ~1.2× on compute. Everything derived from the 25 ms
+figure — including a claimed 23× wasm penalty — was wrong.
+
+---
+
 ## Still untested
 
-- The nested stack **inside wasm**. Both halves work separately; they have not been run
-  together. The blocker is mechanical: the emscripten build's 9p uses `fs_net.c`'s vfsync
-  format, not a local directory, so `qemu-x86_64` and the payload need to go into a
-  generated vfsync tree (via `build_filelist`) or into the disk image.
 - Boot time in an actual browser rather than node. Node uses the same V8, so I would
   expect it to be close, but that is an inference.
-- `binfmt_misc`, which needs a kernel we build.
+- `binfmt_misc`, which needs a kernel we build. In progress: nixpkgs cross-builds a
+  riscv64 kernel (`pkgsCross.riscv64.linux`, 6.12.77) and the toolchain is cached, so
+  only the kernel itself compiles. Whether a 6.x kernel boots on TinyEMU's 2018-vintage
+  machine is the open question — the generated device tree looks compatible
+  (`riscv,cpu-intc`, `riscv,plic0`, `virtio,mmio`), so SBI is the likely failure point,
+  which is why `RISCV_SBI_V01` matters for Bellard's old `bbl64.bin`.

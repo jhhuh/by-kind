@@ -3,8 +3,21 @@
 Goal: a riscv64 kernel with `CONFIG_BINFMT_MISC=y`, so x86_64 binaries execute
 transparently instead of needing an explicit `qemu-x86_64` prefix.
 
-Result: **Linux 6.12.77 boots on TinyEMU and binfmt_misc works**, after fixing a bug in
-TinyEMU. One blocker remains, precisely located.
+Result: **done.** An x86_64 binary now executes transparently inside the emulated
+riscv64 guest, with no interpreter prefix and `uname -m` reporting `x86_64`:
+
+```
+/ # sh /mnt/setup-binfmt.sh
+REGISTER_OK
+/ # echo NATIVE_OK; /mnt/busybox echo TRANSPARENT_X86_64_OK
+NATIVE_OK
+TRANSPARENT_X86_64_OK
+/ # /mnt/busybox uname -m
+x86_64
+```
+
+Native riscv64 and emulated x86_64 coexist on one shell with the kernel choosing the
+interpreter silently. Getting there needed **two fixes to TinyEMU**, both included here.
 
 Companion notes: [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md),
 [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md).
@@ -135,23 +148,62 @@ v9fs_dir_readdir_dotl+0x128/0x17e
 Mounting with `-o trans=virtio,version=9p2000.L,msize=8192` — the value Bellard's own
 configs use — avoids it, and the filesystem then works.
 
-### The blocker: `rdtime` traps
+### The second TinyEMU bug: the `time` CSR does not exist
 
-With 9p mounted, `qemu-x86_64` is found and executed, then dies:
+With 9p mounted, `qemu-x86_64` was found and executed, then died:
 
 ```
 status: 0000000200004003  badaddr: 00000000c01027f3  cause: 0000000000000002
 Illegal instruction
 ```
 
-`cause 2` is illegal instruction and the opcode decodes as `csrrs` from CSR **`0xc01`,
-the `time` counter**. Modern riscv64 userspace reads `rdtime` directly.
+`cause 2` is illegal instruction, and the opcode decodes as `csrrs` from CSR **`0xc01`,
+the `time` counter**. TinyEMU never implemented it — deliberately, and Bellard left the
+reason in a comment:
 
-The interesting part: **the same `qemu-x86_64` binary runs fine under the 4.15 kernel** on
-the same emulator. So this is not simply a missing CSR — it is an interaction, most likely
-around `scounteren`/`mcounteren` (the bits that permit U-mode access to the counters) and
-how 6.12 programs them versus 4.15. That is the next thing to look at, and it is again in
-code we own.
+```c
+/* the 'time' counter is usually emulated */
+if (csr != 0xc01 && csr != 0xc81) {
+```
+
+He expected M-mode firmware to trap and emulate `rdtime`. Real bbl does, which is why the
+4.15 guest worked. But 6.12's vDSO reads `rdtime` from **U-mode**, where the trap is
+delivered as SIGILL instead.
+
+There were two defects, not one:
+
+```c
+/* cycle and insn counters */
+#define COUNTEREN_MASK ((1 << 0) | (1 << 2))     /* CY | IR — TM (bit 1) missing */
+```
+
+so even a kernel that sets `scounteren.TM` had the bit masked away; and there was no
+`case 0xc01` in `csr_read` at all.
+
+The fix in [`nixbox-wasm/tinyemu-time-csr.patch`](nixbox-wasm/tinyemu-time-csr.patch)
+adds TM to `COUNTEREN_MASK`, implements CSR `0xc01`/`0xc81` with the standard
+`scounteren`/`mcounteren` permission checks, and extends the CPU class vtable with a
+`set_get_time` hook so `riscv_machine.c` can hand the CPU the same clock the CLINT's
+`mtime` exposes. That keeps guest timekeeping consistent instead of inventing a second
+time base.
+
+Verified: `qemu-x86_64 --version` now runs under 6.12, and the 4.15 guest still boots and
+runs x86_64 binaries, so no regression.
+
+### A self-inflicted detour worth recording
+
+Transparent execution then failed with `ELOOP` — "Too many levels of symbolic links" —
+on *every* binary including native riscv64 ones. The rule was matching everything.
+
+The cause was mine. `binfmt_misc` wants the magic and mask as **escaped text**
+(`\x7fELF\x02…`), which is literally what Alpine's `/usr/lib/binfmt.d/qemu-x86_64.conf`
+contains. I had "helpfully" converted them to raw bytes with `printf` on the host, and the
+embedded NULs truncated the magic to `\x7fELF\x02\x01\x01`, which matches any ELF —
+so each exec re-invoked the interpreter, which matched again, until the kernel gave up.
+
+Use Alpine's file verbatim, rewriting only the interpreter path. Related trap: busybox's
+`printf` has no `\xNN` escape, so generating the line inside the guest fails differently
+and just as silently.
 
 ## Status summary
 
@@ -161,10 +213,14 @@ code we own.
 | Linux 6.12 boots on TinyEMU | **done**, needed the ISA-string patch |
 | `binfmt_misc` present, mountable, registers | **done** |
 | 9p usable | **done** with `msize=8192` |
-| run an x86_64 binary transparently | **blocked** on `rdtime` trapping |
+| implement the `time` CSR | **done**, second patch |
+| run an x86_64 binary transparently | **done** |
 | kernel small enough to ship | **not started** — 44.6 MB vs 3.98 MB |
 
-The x86_64-under-emulation result already stands independently on the 4.15 kernel, where
-it works with an explicit interpreter prefix — see the companion note. What binfmt adds is
-transparency, which matters because an x86_64 process that execs another x86_64 binary
-fails without it.
+What binfmt adds over the 4.15 result is transparency, and it is not cosmetic: without it
+an x86_64 process that execs another x86_64 binary fails, so nothing beyond a single
+command works. With it, a shell can mix architectures on one `PATH` without wrappers.
+
+The remaining work is size. A 44.6 MB `Image` cannot ship next to a 155 KB emulator, so a
+minimal kernel config is the next task — and now that the two TinyEMU bugs are fixed, it
+is the only thing between this and a browser artifact.

@@ -371,6 +371,17 @@ is only practical on the 4.15 guest today**. Candidates, none verified:
 
 ### Instrumented, and it is not the MMU — the guest never idles
 
+> **RETRACTED 2026-08-03.** The two sections below ("the guest never idles" and "Not a
+> timer storm") reach one correct conclusion — it is not the MMU and not a timer storm —
+> from one broken measurement. `TLBSTAT` was keyed on `insn_counter` and carried no
+> wall-clock stamp, so "45 seconds idle at a prompt" was in fact counting the **boot**.
+> 6.12 does not spin; it idles three times more cheaply than 4.15. The numbers
+> `220,041,906 insn / 234 wakeups = 940,350` and "~100× more work per wakeup" are
+> artifacts and must not be used. Corrected measurements are below under
+> **"The guest blocks, it does not spin"**; the narrative is in
+> [`devlog_browser-linux.md`](devlog_browser-linux.md). The text is kept as written
+> because the mistake is instructive.
+
 Added counters for page walks, TLB fills and both flush paths
 ([`nixbox-wasm/tinyemu-tlb-instrumentation.patch`](nixbox-wasm/tinyemu-tlb-instrumentation.patch)),
 dumping every 20M instructions. The answer was visible before the workload even started:
@@ -436,6 +447,60 @@ measurement, so I am not going to offer a third without data behind it.
 
 What is established: the slowdown is not the MMU, not interrupt frequency, and not the
 idle path failing. It is whatever 6.12 does on each wakeup.
+
+### The guest blocks, it does not spin
+
+*(2026-08-03, and this supersedes the two sections above.)*
+
+`TLBSTAT` and `TIMERSTAT` now carry `t=` in `CLOCK_MONOTONIC` milliseconds, so an
+instruction count can be divided by the wall time it actually took. That alone dissolved
+the "idle spin":
+
+```
+6.12 BOOT   200,046,013 insn in   1.10 s wall   = 181 Minsn/s
+6.12 IDLE     1,850,784 insn in  35.0  s wall   =  52.9 Kinsn/s
+```
+
+The 220 M instructions previously attributed to 45 seconds of idling are the boot, and
+the boot takes about a second. Idle, on a wall-clock-keyed window:
+
+```
+            insn/s idle   timer rate   insn/wakeup   powerdown
+4.15         166 K         100 Hz         1,663          1
+6.12          53 K         5.5 Hz         9,640          1
+```
+
+6.12 idles **three times more cheaply** than 4.15. More expensive per wakeup, 18× fewer
+wakeups — exactly the tickless behaviour it advertises.
+
+With the idle theory gone, the workload was re-timed from outside the guest, timestamping
+every console byte on the host as it arrives
+([`nixbox-wasm/timed-run.py`](nixbox-wasm/timed-run.py)):
+
+```
+                                                4.15      6.12
+mount 9p                                        0.02 s     -
+qemu-x86_64 busybox true                        0.22 s   does not complete
+qemu-x86_64 busybox echo hi                     0.30 s     -
+```
+
+And during the 6.12 failure, `TIMERSTAT` reports:
+
+```
+TIMERSTAT insn=257,014,108 ... powerdown=1
+TIMERSTAT insn=257,509,339 ... powerdown=1      (+495,231 insn over 5.007 s)
+```
+
+**`powerdown=1` at 99 Kinsn/s while a command is supposedly running.** The guest is not
+executing the workload slowly — it is asleep, waiting for something. That is a stall, not
+an emulation-speed problem, and it is a different class of bug from everything examined
+so far.
+
+Untested lead, recorded so it is not rediscovered: if progress is pinned to the 5.5 Hz
+timer rather than to I/O completion, that would indicate a lost or undelivered virtio
+wakeup, with the periodic tick as the only thing rescuing the guest — and would explain
+why 4.15's 100 Hz tick masks it. Counters for virtio kicks, used-ring completions, IRQ
+raises and guest acks are now in `TLBSTAT`/`TIMERSTAT` to tell those cases apart.
 
 ### Where the size work landed
 

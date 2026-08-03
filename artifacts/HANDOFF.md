@@ -66,27 +66,51 @@ Patches in [`nixbox-wasm/`](nixbox-wasm/):
 
 ## The open blocker
 
-**x86_64 emulation is unusable on the 6.12 guest** — under 0.5 s wall on 4.15, does not
-complete in 360 s on 6.12. Same emulator, same binaries, no binfmt and no 9p involved.
+**x86_64 workloads are unusable on the 6.12 guest.** Timed from outside the guest, with
+host-side timestamps on every console byte
+([`nested/timed-run.py`](nixbox-wasm/timed-run.py)):
 
-Two of my hypotheses were **disproven by measurement**:
+```
+mount 9p, then  qemu-x86_64 busybox true
+  4.15    0.22 s
+  6.12    does not complete
+```
+
+Three of my hypotheses are **disproven by measurement**:
 
 - *Not the MMU.* Page-walk rates unremarkable.
 - *Not a timer storm — the reverse.* 6.12 fires 20x **fewer** interrupts (correctly
   tickless), and both kernels reach WFI with `powerdown=1`.
+- *Not an idle spin, and there is no "100x per wakeup" cost.* **This was my own
+  measurement artifact** and is retracted — see below.
 
-What the data does say:
+### Retracted 2026-08-03: the "idle spin" result
+
+`TLBSTAT` was keyed on `insn_counter` with no wall-clock stamp, so "sit at a prompt for
+45 s and read the instruction count" was counting the **boot** and attributing it to
+idle. With `t=` added to the same dump:
 
 ```
-4.15    40,000,578 insn / 4500 wakeups =     8,889 instructions per timer event
-6.12   220,041,906 insn /  234 wakeups =   940,350 instructions per timer event
+6.12 BOOT   200,046,013 insn in   1.10 s wall
+6.12 IDLE     1,850,784 insn in  35.0  s wall  = 52.9 Kinsn/s
+
+               insn/s idle   timer rate   insn/wakeup
+  4.15          166 K         100 Hz         1,663
+  6.12           53 K         5.5 Hz         9,640
 ```
 
-**~100x more work per wakeup.** I am not offering a third mechanism without data, having
-guessed wrong twice here. The instrumentation patches
-(`tinyemu-tlb-instrumentation.patch`, `tinyemu-timer-instrumentation.patch`) are
-committed and reusable; the next step is finding *what* runs during those 940K
-instructions — e.g. logging PC ranges after wakeup.
+6.12 idles **three times more cheaply** than 4.15 in absolute terms. It never spun. The
+figures `220,041,906 insn / 234 wakeups = 940,350` and "~100x more work per wakeup" came
+from dividing boot instructions by idle wakeups and should not be used.
+
+### What replaces it
+
+During the failing workload the 6.12 guest reports `powerdown=1` at ~135 Kinsn/s — it is
+**blocked, not spinning**. Whatever is wrong is a stall, not slow emulation, which is a
+different class of bug from everything investigated so far. Untested lead: progress may
+be pinned to the 5.5 Hz timer rather than to I/O completion (a lost or undelivered virtio
+wakeup), which `nohz=off` on the kernel cmdline would show cheaply. **Not yet measured —
+do not treat as a finding.**
 
 ## Reading order
 
@@ -114,7 +138,7 @@ instructions — e.g. logging PC ranges after wakeup.
 - The **remote builder fails on cross derivations** (`/setup: No such file or directory`
   from `source-stdenv.sh` on `zhao.coati-bebop.ts.net`); use `--builders ''`.
 
-## Three of my measurements were wrong
+## Four of my measurements were wrong
 
 Worth knowing when reading older commits, all corrected in place:
 
@@ -122,8 +146,13 @@ Worth knowing when reading older commits, all corrected in place:
   was never timed. Real figure 290.8 ms.
 - "55% of boot is console logging" was host pty I/O under `script`, not emulation.
 - "1 s vs 370 s" came from `date +%s` **inside the guest** — guest clock, not wall clock.
+- "180 M instructions while idle on 6.12" was the boot, counted by an
+  instruction-keyed dump with no wall clock.
 
-Measure externally before trusting a timing.
+All four are the same failure: reading a counter whose key is not the axis being claimed.
+`TLBSTAT` and `TIMERSTAT` now both carry `t=` in `CLOCK_MONOTONIC` ms, and
+`timed-run.py` timestamps console bytes on the host. Measure externally, and check what
+the x-axis actually is.
 
 ## Not done
 

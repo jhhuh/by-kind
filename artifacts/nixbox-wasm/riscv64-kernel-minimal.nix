@@ -91,5 +91,9 @@ cross.stdenv.mkDerivation {
     mkdir -p $out
     cp arch/riscv/boot/Image $out/Image
     cp .config $out/config
+    # System.map and the unstripped vmlinux let the TinyEMU PC profiler
+    # resolve supervisor-mode samples to kernel symbols.
+    cp System.map $out/System.map
+    cp vmlinux $out/vmlinux
   '';
 }

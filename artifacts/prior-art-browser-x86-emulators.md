@@ -56,6 +56,15 @@ The published tarball (`tinyemu-2019-12-21.tar.gz`) contains a complete x86 PC �
 `x86_machine.c` is 2,569 lines of i440FX/PIIX3, PIC, PIT, RTC, IDE, PS/2, VGA, PCI and
 VirtIO — and a 14-function CPU interface in `x86_cpu.h`, consumed at 29 call sites.
 
+**That interface is 32-bit, and this is the decision-relevant fact about it.** Registers
+are passed as `uint32_t`, `X86CPUSeg` carries `uint32_t base` and `uint32_t limit`, and
+the only control registers named are `CR0` and `CR2` — there is no CR4, EFER or LSTAR.
+Long mode cannot be expressed through it, and `x86_machine.c` mentions EFER/CR4/long mode
+exactly once. So filling in `x86_cpu_interp` against the published headers yields a
+**32-bit** CPU; reaching x86_64 additionally means redesigning the header and the machine
+model. Bellard's x86_64 core is a separate, unpublished codebase — the open tree never
+had the 64-bit shape. Do not read "just implement `x86_cpu_interp`" as a route to x86_64.
+
 What it does not contain is a CPU:
 
 ```c

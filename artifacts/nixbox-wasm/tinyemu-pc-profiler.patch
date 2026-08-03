@@ -1,0 +1,140 @@
+--- riscv_cpu.c.pre_prof	2026-08-03 10:03:31.429845788 +0900
++++ riscv_cpu.c	2026-08-03 10:08:03.421129721 +0900
+@@ -51,6 +51,76 @@
+ 
+ #include "riscv_cpu_priv.h"
+ 
++/* ---- PC sampling profiler ------------------------------------------
++   Samples the program counter every RISCV_PROF_STRIDE instructions into an
++   open-addressed table keyed on (pc, priv). Supervisor samples resolve
++   against the kernel's System.map; user samples are the workload. */
++#define RISCV_PROF_STRIDE 997
++#define RISCV_PROF_BITS   14
++#define RISCV_PROF_SIZE   (1 << RISCV_PROF_BITS)
++
++typedef struct {
++    uint64_t pc;
++    uint64_t count;
++    uint8_t priv;
++    uint8_t used;
++} RISCVProfEntry;
++
++static RISCVProfEntry riscv_prof_tab[RISCV_PROF_SIZE];
++static uint64_t riscv_prof_samples, riscv_prof_lost;
++
++static void riscv_prof_sample(uint64_t pc, int priv)
++{
++    uint64_t h = (pc * 0x9E3779B97F4A7C15ULL) >> (64 - RISCV_PROF_BITS);
++    int i;
++    riscv_prof_samples++;
++    for(i = 0; i < 64; i++) {
++        RISCVProfEntry *e = &riscv_prof_tab[(h + i) & (RISCV_PROF_SIZE - 1)];
++        if (!e->used) {
++            e->used = 1; e->pc = pc; e->priv = (uint8_t)priv; e->count = 1;
++            return;
++        }
++        if (e->pc == pc && e->priv == priv) { e->count++; return; }
++    }
++    riscv_prof_lost++;
++}
++
++static int riscv_prof_cmp(const void *a, const void *b)
++{
++    uint64_t ca = ((const RISCVProfEntry *)a)->count;
++    uint64_t cb = ((const RISCVProfEntry *)b)->count;
++    return (cb > ca) - (cb < ca);
++}
++
++static void riscv_prof_dump(void)
++{
++    static RISCVProfEntry snap[RISCV_PROF_SIZE];
++    uint64_t by_priv[4] = {0, 0, 0, 0};
++    uint64_t total = 0;
++    int i, n = 0;
++
++    for(i = 0; i < RISCV_PROF_SIZE; i++)
++        if (riscv_prof_tab[i].used) {
++            snap[n++] = riscv_prof_tab[i];
++            by_priv[riscv_prof_tab[i].priv & 3] += riscv_prof_tab[i].count;
++            total += riscv_prof_tab[i].count;
++        }
++    if (!total)
++        return;
++    qsort(snap, n, sizeof(snap[0]), riscv_prof_cmp);
++    fprintf(stderr, "PROF total=%llu U=%.1f%% S=%.1f%% M=%.1f%% distinct=%d lost=%llu\n",
++            (unsigned long long)total,
++            100.0 * by_priv[0] / total, 100.0 * by_priv[1] / total,
++            100.0 * by_priv[3] / total, n, (unsigned long long)riscv_prof_lost);
++    for(i = 0; i < n && i < 15; i++)
++        fprintf(stderr, "PROF   %5.1f%%  %c  0x%016llx\n",
++                100.0 * snap[i].count / total,
++                "US?M"[snap[i].priv & 3],
++                (unsigned long long)snap[i].pc);
++    memset(riscv_prof_tab, 0, sizeof(riscv_prof_tab));
++    riscv_prof_samples = riscv_prof_lost = 0;
++}
++
+ #if FLEN > 0
+ #include "softfp.h"
+ #endif
+@@ -1316,13 +1386,33 @@
+             (unsigned long long)s->n_miss_read,
+             (unsigned long long)s->n_miss_write,
+             (unsigned long long)s->n_miss_code);
++    /* trap state + the 32 bytes the PC is sitting in, so an M-mode spin can
++       be compared against the BIOS image on disk */
++    {
++        int i;
++        fprintf(stderr, "TRAPSTATE priv=%d pc=0x%llx mtvec=0x%llx mepc=0x%llx "
++                "mcause=0x%llx mtval=0x%llx medeleg=0x%x mcounteren=0x%x scounteren=0x%x\n",
++                s->priv,
++                (unsigned long long)(uint64_t)s->pc,
++                (unsigned long long)(uint64_t)s->mtvec,
++                (unsigned long long)(uint64_t)s->mepc,
++                (unsigned long long)(uint64_t)s->mcause,
++                (unsigned long long)(uint64_t)s->mtval,
++                s->medeleg, s->mcounteren, s->scounteren);
++        fprintf(stderr, "MEM@0x80000000");
++        for(i = 0; i < 8; i++)
++            fprintf(stderr, " %08x", phys_read_u32(s, 0x80000000 + i * 4));
++        fprintf(stderr, "\n");
++    }
+ }
+ 
+ static void glue(riscv_cpu_interp, MAX_XLEN)(RISCVCPUState *s, int n_cycles)
+ {
+     if (s->insn_counter >= s->stats_next) {
+-        if (s->stats_next != 0)
++        if (s->stats_next != 0) {
+             glue(riscv_cpu_dump_stats, MAX_XLEN)(s);
++            riscv_prof_dump();
++        }
+         s->stats_next = s->insn_counter + STATS_EVERY;
+     }
+ #ifdef USE_GLOBAL_STATE
+--- riscv_cpu_priv.h.pre_prof	2026-08-03 10:03:31.430845782 +0900
++++ riscv_cpu_priv.h	2026-08-03 10:03:31.451845649 +0900
+@@ -243,6 +243,7 @@
+     uint64_t time_cache_next;
+ 
+     /* instrumentation */
++    uint32_t prof_ctr;
+     uint64_t n_page_walk, n_flush_all, n_flush_vaddr;
+     uint64_t n_miss_read, n_miss_write, n_miss_code;
+     uint64_t stats_next;
+--- riscv_cpu_template.h.pre_prof	2026-08-03 10:03:31.431845776 +0900
++++ riscv_cpu_template.h	2026-08-03 10:03:31.452845643 +0900
+@@ -287,6 +287,13 @@
+             insn = get_insn32(code_ptr);
+         }
+         s->n_cycles--;
++        /* PC sampling: a dedicated countdown, not a mask on n_cycles --
++           n_cycles is reset on every entry to this function, so a mask
++           would re-phase constantly and not be a fixed stride. */
++        if (unlikely(s->prof_ctr-- == 0)) {
++            s->prof_ctr = RISCV_PROF_STRIDE;
++            riscv_prof_sample(GET_PC(), s->priv);
++        }
+ #if 0
+         if (1) {
+ #ifdef CONFIG_LOGFILE

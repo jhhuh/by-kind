@@ -25,6 +25,34 @@ emcc -O3 --closure 0 -sNO_EXIT_RUNTIME=1 -sNO_FILESYSTEM=1 \
 
 Produces `js/temu.wasm`, 159,193 bytes (65,216 gzipped).
 
+## Native build (for the instrumented experiments)
+
+```sh
+nix-shell -p openssl pkg-config --run 'make temu -j8 CONFIG_SDL= CONFIG_FS_NET='
+```
+
+Both `CONFIG_` overrides are needed in this sandbox: `sdl.c` wants SDL **1.x**
+(`SDL/SDL.h`), and `fs_wget.c` does not compile against curl 8.18
+(`multi.h:429: expected identifier before '__extension__'`). Neither touches the riscv64
+interpreter — local 9p (`fs0`) and local disk images still work; only the HTTP-backed
+vfsync filesystem is missing from the resulting binary. `CFLAGS` cannot be overridden on
+the command line without losing the required `-D`s; `TIME_CACHE_INSNS` is
+`#ifndef`-guarded so it can be set with a per-build `-D`.
+
+## Measuring anything
+
+Two harnesses, both of which read the clock from **outside** the guest, because every
+timing mistake in this project came from measuring on the wrong axis:
+
+- `timed-run.py <cfg> <label> [--timeout N] -- <cmd> ...` drives the guest over a pty and
+  timestamps each console byte on the host. Each command must end in `echo MARK<n>`; the
+  next command is sent when that marker arrives on its own line.
+- `idle-burn.sh <temu> <cfg> [secs]` boots to a prompt, sends nothing, and reports
+  instructions per wall second from the wall-clock-keyed `TIMERSTAT` dumps.
+
+`TLBSTAT` and `TIMERSTAT` both carry `t=` in `CLOCK_MONOTONIC` ms. Do not divide an
+instruction count by a wall time you did not read from the same line.
+
 ## Run
 
 Needs a directory holding `rv.cfg`, `bbl64.bin`, `kernel-riscv64.bin` and the **split**

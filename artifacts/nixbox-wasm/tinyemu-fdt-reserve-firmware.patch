@@ -1,0 +1,61 @@
+--- riscv_machine.c.pre_reserve	2026-08-03 10:11:54.772673587 +0900
++++ riscv_machine.c	2026-08-03 10:10:55.686045253 +0900
+@@ -399,6 +399,9 @@
+     char *string_table;
+     int string_table_len;
+     int string_table_size;
++
++    /* optional entry for the FDT memory reservation block */
++    uint64_t rsv_addr, rsv_size;
+ } FDTState;
+ 
+ static FDTState *fdt_init(void)
+@@ -568,6 +571,12 @@
+ }
+ 
+ /* write the FDT to 'dst1'. return the FDT size in bytes */
++static uint64_t fdt_be64(uint64_t v)
++{
++    return ((uint64_t)cpu_to_be32((uint32_t)v) << 32) |
++        cpu_to_be32((uint32_t)(v >> 32));
++}
++
+ int fdt_output(FDTState *s, uint8_t *dst)
+ {
+     struct fdt_header *h;
+@@ -603,7 +612,21 @@
+     }
+     h->off_mem_rsvmap = cpu_to_be32(pos);
+     re = (struct fdt_reserve_entry *)(dst + pos);
+-    re->address = 0; /* no reserved entry */
++    /* Reserve the firmware. The BIOS is loaded at RAM_BASE_ADDR and the
++       kernel at the next 2 MB boundary above it, but nothing here used to
++       tell the guest that the gap is occupied, so Linux treated it as free
++       RAM and eventually allocated over BBL's text. That is silent until
++       the first trap the firmware still owns -- medeleg does not delegate
++       illegal-instruction or access faults -- at which point mtvec jumps
++       into what is now heap data and the machine spins in M-mode forever.
++       4.15 happened not to allocate there; 6.12 does. */
++    if (s->rsv_size != 0) {
++        re->address = fdt_be64(s->rsv_addr);
++        re->size = fdt_be64(s->rsv_size);
++        re++;
++        pos += sizeof(struct fdt_reserve_entry);
++    }
++    re->address = 0; /* terminating entry */
+     re->size = 0;
+     pos += sizeof(struct fdt_reserve_entry);
+ 
+@@ -640,6 +663,12 @@
+     FBDevice *fb_dev;
+     
+     s = fdt_init();
++    /* see the reservation block in fdt_output() */
++    if (kernel_size > 0 && kernel_start > RAM_BASE_ADDR) {
++        s->rsv_addr = RAM_BASE_ADDR;
++        s->rsv_size = kernel_start - RAM_BASE_ADDR;
++    }
++
+     cur_phandle = 1;
+     
+     fdt_begin_node(s, "");

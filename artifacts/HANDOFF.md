@@ -47,7 +47,7 @@ TRANSPARENT_x86_64_OK
 x86_64
 ```
 
-## Three TinyEMU bugs found and fixed
+## Five TinyEMU bugs found and fixed
 
 Patches in [`nixbox-wasm/`](nixbox-wasm/):
 
@@ -59,30 +59,48 @@ Patches in [`nixbox-wasm/`](nixbox-wasm/):
   firmware to trap `rdtime`; 6.12's vDSO reads it from U-mode), and `COUNTEREN_MASK`
   lacked TM. Includes a 1024-instruction cache, because the naive version called
   `clock_gettime()` once per guest instruction.
+- **`tinyemu-dt-rng-seed.patch`** — no entropy source at all, so Linux ≥5.x blocks
+  the first `getrandom()` forever. See the blocker section below.
+- **`tinyemu-fdt-reserve-firmware.patch`** — empty FDT memory reservation map, so
+  Linux overwrites BBL and any M-mode trap spins forever. See below.
 - **`tinyemu-virtqueue-size.patch`** — `MAX_QUEUE_NUM` was **16**, and
   `VRING_DESC_F_INDIRECT` is defined but never used, so ring length capped
   scatter-gather size. One line to 256: `msize=131072` works and a 3.76 MB load went
   **~200 s → 1 s**.
 
-## The open blocker
+## The blocker is closed (2026-08-03)
 
-**x86_64 workloads are unusable on the 6.12 guest.** Timed from outside the guest, with
-host-side timestamps on every console byte
-([`nested/timed-run.py`](nixbox-wasm/timed-run.py)):
+x86_64 workloads now run on the 6.12 guest at 4.15's speed. Timed from outside the
+guest, with host-side timestamps on every console byte
+([`timed-run.py`](nixbox-wasm/timed-run.py)):
 
 ```
-mount 9p, then  qemu-x86_64 busybox true
-  4.15    0.22 s
-  6.12    does not complete
+                                   6.12 before   6.12 after   4.15
+qemu-x86_64 busybox true           never >380s      0.29 s    0.22 s
+qemu-x86_64 busybox uname -m       never            0.40 s    0.33 s
+qemu-x86_64 busybox md5sum (1 MB)  never            0.95 s      -
 ```
 
-Three of my hypotheses are **disproven by measurement**:
+Digest verified against the host, `uname -m` reports `x86_64`, and 4.15 is unchanged.
+It was **two more TinyEMU bugs**, neither related to emulation speed:
 
-- *Not the MMU.* Page-walk rates unremarkable.
-- *Not a timer storm — the reverse.* 6.12 fires 20x **fewer** interrupts (correctly
-  tickless), and both kernels reach WFI with `powerdown=1`.
-- *Not an idle spin, and there is no "100x per wakeup" cost.* **This was my own
-  measurement artifact** and is retracted — see below.
+- **`tinyemu-dt-rng-seed.patch`** — TinyEMU has no entropy source of any kind, and
+  Linux ≥5.x blocks `getrandom()` in `wait_for_random_bytes()` until the CRNG is
+  seeded, so the first caller hangs forever. Caught by asking the guest:
+  `SYSCALL=278` (`__NR_getrandom`), `WCHAN=wait_for_random_bytes`. Fixed by putting
+  an `rng-seed` in the device tree's `/chosen`, the standard bootloader contract.
+- **`tinyemu-fdt-reserve-firmware.patch`** — `fdt_output()` wrote an *empty* memory
+  reservation map, so Linux allocated over BBL's text. Silent until the first trap
+  the firmware still owns (`medeleg` delegates neither illegal-instruction nor access
+  faults), whereupon `mtvec` jumps into heap data and the machine spins in M-mode at
+  240 Minsn/s forever. Caught by the PC profiler: 100% M-mode in a 7-instruction loop
+  at `0x80000004`, with the memory there no longer matching `bbl64.bin`.
+
+Three earlier hypotheses were **disproven by measurement** and are worth not
+revisiting: not the MMU (page-walk rates unremarkable); not a timer storm (6.12 fires
+20× *fewer* interrupts, correctly tickless); and not an idle spin — that last one was
+my own measurement artifact, retracted below. A fourth, that U-mode `rdtime` was
+trapping, died on inspection: `mcounteren`/`scounteren` are both `0x7`.
 
 ### Retracted 2026-08-03: the "idle spin" result
 
@@ -103,24 +121,24 @@ idle. With `t=` added to the same dump:
 figures `220,041,906 insn / 234 wakeups = 940,350` and "~100x more work per wakeup" came
 from dividing boot instructions by idle wakeups and should not be used.
 
-### What replaces it
+### What replaced it
 
-During the failing workload the 6.12 guest reports `powerdown=1` at ~135 Kinsn/s — it is
-**blocked, not spinning**. Whatever is wrong is a stall, not slow emulation, which is a
-different class of bug from everything investigated so far. Untested lead: progress may
-be pinned to the 5.5 Hz timer rather than to I/O completion (a lost or undelivered virtio
-wakeup), which `nohz=off` on the kernel cmdline would show cheaply. **Not yet measured —
-do not treat as a finding.**
+Re-timing the workload from outside showed the guest was **blocked, not spinning** —
+`powerdown=1` at ~135 Kinsn/s, with virtio kicks, completions, IRQ raises and acks all
+frozen, so there was no outstanding I/O either. That reframing is what led to
+`getrandom()`, and from there to the overwritten firmware. Both are fixed above.
 
 ## Reading order
 
 1. [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md) — the measurements
-2. [`modern-kernel-on-tinyemu.md`](modern-kernel-on-tinyemu.md) — kernel build, the three
-   bugs, the open blocker, and both wrong turns
-3. [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md) — landscape
-4. [`js-wasm-boundary-patterns.md`](js-wasm-boundary-patterns.md) — JS↔wasm plumbing,
+2. [`devlog_browser-linux.md`](devlog_browser-linux.md) — the running journal, and the
+   only place the two 2026-08-03 bugs are written up in full
+3. [`modern-kernel-on-tinyemu.md`](modern-kernel-on-tinyemu.md) — kernel build, the first
+   three bugs, and the wrong turns
+4. [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md) — landscape
+5. [`js-wasm-boundary-patterns.md`](js-wasm-boundary-patterns.md) — JS↔wasm plumbing,
    written to be self-contained
-5. [`nixbox-wasm/README.md`](nixbox-wasm/README.md) — how to reproduce the build
+6. [`nixbox-wasm/README.md`](nixbox-wasm/README.md) — how to build and how to measure
 
 ## Gotchas that cost hours
 
@@ -135,6 +153,9 @@ do not treat as a finding.**
   output-only, so the guest prints perfectly and accepts no input.
 - binfmt magic must be **escaped text**, not raw bytes — NULs truncate it so it matches
   every ELF and every exec ELOOPs, including native ones. Use Alpine's conf verbatim.
+- **Mount `/proc` before believing `ps`** — without it `ps` prints a header and no rows
+  and `/proc/[0-9]*` does not glob, which looks like "no processes" rather than "no
+  procfs". `/proc/<pid>/syscall` and `wchan` are what actually named both 2026-08-03 bugs.
 - The **remote builder fails on cross derivations** (`/setup: No such file or directory`
   from `source-stdenv.sh` on `zhao.coati-bebop.ts.net`); use `--builders ''`.
 

@@ -17,7 +17,9 @@ x86_64
 ```
 
 Native riscv64 and emulated x86_64 coexist on one shell with the kernel choosing the
-interpreter silently. Getting there needed **two fixes to TinyEMU**, both included here.
+interpreter silently. Getting there needed **five fixes to TinyEMU**: three are written
+up in this file, and the last two — no entropy source, and firmware not reserved in the
+device tree — are in [`devlog_browser-linux.md`](devlog_browser-linux.md).
 
 Companion notes: [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md),
 [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md).
@@ -216,7 +218,7 @@ and just as silently.
 | implement the `time` CSR | **done**, second patch |
 | run an x86_64 binary transparently | **done** on 4.15 |
 | 9p usable at a workable `msize` | **done**, third patch (ring 16 → 256) |
-| x86_64 emulation practical on 6.12 | **no** — >370 s vs 1 s on 4.15, undiagnosed |
+| x86_64 emulation practical on 6.12 | **yes**, since 2026-08-03 — 0.29 s vs 0.22 s on 4.15 |
 | kernel small enough to ship | **not started** — 44.6 MB vs 3.98 MB |
 
 What binfmt adds over the 4.15 result is transparency, and it is not cosmetic: without it
@@ -361,7 +363,8 @@ invocation with no binfmt involved. On 4.15 it is a second; on 6.12 it had not c
 after six minutes.
 
 That is not "slower", it is pathological, and it means **the transparent-execution result
-is only practical on the 4.15 guest today**. Candidates, none verified:
+is only practical on the 4.15 guest today**. *(Superseded: fixed 2026-08-03, see the
+end of this section.)* Candidates, none verified:
 
 - TinyEMU advertises `mmu-type = riscv,sv48`; 4.15-era riscv Linux used sv39. A 4-level
   software page walk costs more per TLB miss, but not 300×.
@@ -496,11 +499,22 @@ executing the workload slowly — it is asleep, waiting for something. That is a
 an emulation-speed problem, and it is a different class of bug from everything examined
 so far.
 
-Untested lead, recorded so it is not rediscovered: if progress is pinned to the 5.5 Hz
-timer rather than to I/O completion, that would indicate a lost or undelivered virtio
-wakeup, with the periodic tick as the only thing rescuing the guest — and would explain
-why 4.15's 100 Hz tick masks it. Counters for virtio kicks, used-ring completions, IRQ
-raises and guest acks are now in `TLBSTAT`/`TIMERSTAT` to tell those cases apart.
+Counters for virtio kicks, used-ring completions, IRQ raises and guest acks went into
+`TLBSTAT`/`TIMERSTAT`, and showed all four **frozen** through the hang — so there was
+no outstanding I/O to lose either. That killed the lost-wakeup idea and left asking
+the guest directly, which named both remaining bugs in one shot:
+
+```
+FOUNDPID=29
+SYSCALL=278 …                  # __NR_getrandom on riscv64
+WCHAN=wait_for_random_bytes
+```
+
+**Both are fixed.** `qemu-x86_64 busybox true` now takes 0.29 s on 6.12 against 0.22 s
+on 4.15. The full write-up — no entropy source, then the overwritten firmware exposed
+by fixing it — is in [`devlog_browser-linux.md`](devlog_browser-linux.md); the patches
+are [`tinyemu-dt-rng-seed.patch`](nixbox-wasm/tinyemu-dt-rng-seed.patch) and
+[`tinyemu-fdt-reserve-firmware.patch`](nixbox-wasm/tinyemu-fdt-reserve-firmware.patch).
 
 ### Where the size work landed
 

@@ -67,8 +67,9 @@ while time.monotonic() < deadline:
 p.kill(); p.wait(); err.close()
 
 print(f'=== {label} ===')
+verbose = os.environ.get('VERBOSE')
 for t, txt in events:
-    if txt.startswith('<<') or 'MARK' in txt or 'DONE' in txt or 'real' in txt:
+    if verbose or txt.startswith('<<') or 'MARK' in txt or 'DONE' in txt:
         print(f'  {t:8.2f}s  {txt}')
 if sent < len(cmds) or not any(f'MARK{len(cmds)-1}' in t for _, t in events):
     print(f'  TIMEOUT after {timeout}s (sent {sent}/{len(cmds)} commands)')

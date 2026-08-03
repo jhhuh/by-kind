@@ -1,5 +1,5 @@
---- riscv_cpu.c.pre_prof	2026-08-03 10:03:31.429845788 +0900
-+++ riscv_cpu.c	2026-08-03 10:08:03.421129721 +0900
+--- /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu.c.pre_prof	2026-08-03 10:03:31.429845788 +0900
++++ /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu.c	2026-08-03 10:35:58.933045055 +0900
 @@ -51,6 +51,76 @@
  
  #include "riscv_cpu_priv.h"
@@ -22,7 +22,7 @@
 +static RISCVProfEntry riscv_prof_tab[RISCV_PROF_SIZE];
 +static uint64_t riscv_prof_samples, riscv_prof_lost;
 +
-+static void riscv_prof_sample(uint64_t pc, int priv)
++static __attribute__((unused)) void riscv_prof_sample(uint64_t pc, int priv)
 +{
 +    uint64_t h = (pc * 0x9E3779B97F4A7C15ULL) >> (64 - RISCV_PROF_BITS);
 +    int i;
@@ -45,7 +45,7 @@
 +    return (cb > ca) - (cb < ca);
 +}
 +
-+static void riscv_prof_dump(void)
++static __attribute__((unused)) void riscv_prof_dump(void)
 +{
 +    static RISCVProfEntry snap[RISCV_PROF_SIZE];
 +    uint64_t by_priv[4] = {0, 0, 0, 0};
@@ -77,7 +77,7 @@
  #if FLEN > 0
  #include "softfp.h"
  #endif
-@@ -1316,13 +1386,33 @@
+@@ -1316,13 +1386,35 @@
              (unsigned long long)s->n_miss_read,
              (unsigned long long)s->n_miss_write,
              (unsigned long long)s->n_miss_code);
@@ -107,13 +107,15 @@
 -        if (s->stats_next != 0)
 +        if (s->stats_next != 0) {
              glue(riscv_cpu_dump_stats, MAX_XLEN)(s);
++#ifdef RISCV_PROF_ENABLE
 +            riscv_prof_dump();
++#endif
 +        }
          s->stats_next = s->insn_counter + STATS_EVERY;
      }
  #ifdef USE_GLOBAL_STATE
---- riscv_cpu_priv.h.pre_prof	2026-08-03 10:03:31.430845782 +0900
-+++ riscv_cpu_priv.h	2026-08-03 10:03:31.451845649 +0900
+--- /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu_priv.h.pre_prof	2026-08-03 10:03:31.430845782 +0900
++++ /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu_priv.h	2026-08-03 10:03:31.451845649 +0900
 @@ -243,6 +243,7 @@
      uint64_t time_cache_next;
  
@@ -122,19 +124,23 @@
      uint64_t n_page_walk, n_flush_all, n_flush_vaddr;
      uint64_t n_miss_read, n_miss_write, n_miss_code;
      uint64_t stats_next;
---- riscv_cpu_template.h.pre_prof	2026-08-03 10:03:31.431845776 +0900
-+++ riscv_cpu_template.h	2026-08-03 10:03:31.452845643 +0900
-@@ -287,6 +287,13 @@
+--- /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu_template.h.pre_prof	2026-08-03 10:03:31.431845776 +0900
++++ /tmp/claude-1000/-home-jhhuh-Sync-proj-cat-nixpkgs/319e739d-d882-4ac8-a324-1a1cefa2c58f/scratchpad/tinyemu-2019-12-21/riscv_cpu_template.h	2026-08-03 10:35:58.932045057 +0900
+@@ -287,6 +287,17 @@
              insn = get_insn32(code_ptr);
          }
          s->n_cycles--;
++#ifdef RISCV_PROF_ENABLE
 +        /* PC sampling: a dedicated countdown, not a mask on n_cycles --
 +           n_cycles is reset on every entry to this function, so a mask
-+           would re-phase constantly and not be a fixed stride. */
++           would re-phase constantly and not be a fixed stride.
++           Off by default: this is the only per-instruction cost in the
++           instrumentation, so a benchmark build must not carry it. */
 +        if (unlikely(s->prof_ctr-- == 0)) {
 +            s->prof_ctr = RISCV_PROF_STRIDE;
 +            riscv_prof_sample(GET_PC(), s->priv);
 +        }
++#endif
  #if 0
          if (1) {
  #ifdef CONFIG_LOGFILE

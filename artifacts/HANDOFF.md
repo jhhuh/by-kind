@@ -130,6 +130,27 @@ Re-timing the workload from outside showed the guest was **blocked, not spinning
 frozen, so there was no outstanding I/O either. That reframing is what led to
 `getrandom()`, and from there to the overwritten firmware. Both are fixed above.
 
+## Does the design hold up?
+
+Yes on compute, no on syscalls. Benchmarked against **Bellard's own x86_64 wasm
+emulator** — not redistributable, so measurement only — with the same freestanding
+binary in both, startup subtracted, timed on the host:
+
+```
+                            compute-bound     syscall-bound
+  native x86_64                  1.0x              1.0x
+  Bellard x86_64 in wasm        67.8x              5.8x
+  ours (riscv64 + qemu-user)    72.7x             65.4x
+  ---------------------------------------------------------
+  cost of the nested design      1.07x            11.2x
+```
+
+So implementing `x86_cpu_interp` in TinyEMU buys **essentially nothing** for
+compute-bound work, and up to ~11× only for syscall-bound work — which is unfortunately
+the shape of real nix package use. His core is closed and hand-optimised, so 11× is an
+*upper* bound on the payoff. Full write-up and caveats:
+[`benchmark-vs-bellard-x86_64.md`](benchmark-vs-bellard-x86_64.md).
+
 ## Reading order
 
 1. [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md) — the
@@ -142,7 +163,9 @@ frozen, so there was no outstanding I/O either. That reframing is what led to
 4. [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md) — landscape
 5. [`js-wasm-boundary-patterns.md`](js-wasm-boundary-patterns.md) — JS↔wasm plumbing,
    written to be self-contained
-6. [`nixbox-wasm/README.md`](nixbox-wasm/README.md) — how to build and how to measure
+6. [`benchmark-vs-bellard-x86_64.md`](benchmark-vs-bellard-x86_64.md) — is the nested
+   design fast enough, measured against Bellard's x86_64 core
+7. [`nixbox-wasm/README.md`](nixbox-wasm/README.md) — how to build and how to measure
 
 ## Gotchas that cost hours
 

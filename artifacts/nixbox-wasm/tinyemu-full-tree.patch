@@ -1,5 +1,5 @@
 --- a/riscv_cpu.c	2019-12-22 02:23:54.000000000 +0900
-+++ b/riscv_cpu.c	2026-08-03 10:08:03.421129721 +0900
++++ b/riscv_cpu.c	2026-08-03 10:35:58.933045055 +0900
 @@ -28,6 +28,7 @@
  #include <inttypes.h>
  #include <assert.h>
@@ -30,7 +30,7 @@
 +static RISCVProfEntry riscv_prof_tab[RISCV_PROF_SIZE];
 +static uint64_t riscv_prof_samples, riscv_prof_lost;
 +
-+static void riscv_prof_sample(uint64_t pc, int priv)
++static __attribute__((unused)) void riscv_prof_sample(uint64_t pc, int priv)
 +{
 +    uint64_t h = (pc * 0x9E3779B97F4A7C15ULL) >> (64 - RISCV_PROF_BITS);
 +    int i;
@@ -53,7 +53,7 @@
 +    return (cb > ca) - (cb < ca);
 +}
 +
-+static void riscv_prof_dump(void)
++static __attribute__((unused)) void riscv_prof_dump(void)
 +{
 +    static RISCVProfEntry snap[RISCV_PROF_SIZE];
 +    uint64_t by_priv[4] = {0, 0, 0, 0};
@@ -202,7 +202,7 @@
      case 0xc80: /* mcycleh */
      case 0xc82: /* minstreth */
          if (s->cur_xlen != 32)
-@@ -1226,8 +1356,65 @@
+@@ -1226,8 +1356,67 @@
  #include "riscv_cpu_template.h"
  #endif
  
@@ -261,14 +261,16 @@
 +    if (s->insn_counter >= s->stats_next) {
 +        if (s->stats_next != 0) {
 +            glue(riscv_cpu_dump_stats, MAX_XLEN)(s);
++#ifdef RISCV_PROF_ENABLE
 +            riscv_prof_dump();
++#endif
 +        }
 +        s->stats_next = s->insn_counter + STATS_EVERY;
 +    }
  #ifdef USE_GLOBAL_STATE
      s = &riscv_cpu_global_state;
  #endif
-@@ -1263,6 +1450,14 @@
+@@ -1263,6 +1452,14 @@
      return s->insn_counter;
  }
  
@@ -283,7 +285,7 @@
  static void glue(riscv_cpu_set_mip, MAX_XLEN)(RISCVCPUState *s, uint32_t mask)
  {
      s->mip |= mask;
-@@ -1343,6 +1538,7 @@
+@@ -1343,6 +1540,7 @@
      glue(riscv_cpu_get_power_down, MAX_XLEN),
      glue(riscv_cpu_get_misa, MAX_XLEN),
      glue(riscv_cpu_flush_tlb_write_range_ram, MAX_XLEN),
@@ -342,18 +344,22 @@
      TLBEntry tlb_write[TLB_SIZE];
      TLBEntry tlb_code[TLB_SIZE];
 --- a/riscv_cpu_template.h	2019-12-22 02:23:54.000000000 +0900
-+++ b/riscv_cpu_template.h	2026-08-03 10:03:31.452845643 +0900
-@@ -287,6 +287,13 @@
++++ b/riscv_cpu_template.h	2026-08-03 10:35:58.932045057 +0900
+@@ -287,6 +287,17 @@
              insn = get_insn32(code_ptr);
          }
          s->n_cycles--;
++#ifdef RISCV_PROF_ENABLE
 +        /* PC sampling: a dedicated countdown, not a mask on n_cycles --
 +           n_cycles is reset on every entry to this function, so a mask
-+           would re-phase constantly and not be a fixed stride. */
++           would re-phase constantly and not be a fixed stride.
++           Off by default: this is the only per-instruction cost in the
++           instrumentation, so a benchmark build must not carry it. */
 +        if (unlikely(s->prof_ctr-- == 0)) {
 +            s->prof_ctr = RISCV_PROF_STRIDE;
 +            riscv_prof_sample(GET_PC(), s->priv);
 +        }
++#endif
  #if 0
          if (1) {
  #ifdef CONFIG_LOGFILE

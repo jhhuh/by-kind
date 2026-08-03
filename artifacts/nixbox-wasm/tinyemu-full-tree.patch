@@ -1,5 +1,5 @@
 --- a/riscv_cpu.c	2019-12-22 02:23:54.000000000 +0900
-+++ b/riscv_cpu.c	2026-08-03 10:35:58.933045055 +0900
++++ b/riscv_cpu.c	2026-08-03 11:14:00.005445109 +0900
 @@ -28,6 +28,7 @@
  #include <inttypes.h>
  #include <assert.h>
@@ -8,7 +8,7 @@
  
  #include "cutils.h"
  #include "iomem.h"
-@@ -50,6 +51,76 @@
+@@ -50,6 +51,85 @@
  
  #include "riscv_cpu_priv.h"
  
@@ -73,11 +73,20 @@
 +            (unsigned long long)total,
 +            100.0 * by_priv[0] / total, 100.0 * by_priv[1] / total,
 +            100.0 * by_priv[3] / total, n, (unsigned long long)riscv_prof_lost);
++#ifdef RISCV_PROF_FULL
++    /* every entry, for offline attribution against /proc/pid/maps */
++    for(i = 0; i < n; i++)
++        fprintf(stderr, "PROFE %c %016llx %llu\n",
++                "US?M"[snap[i].priv & 3],
++                (unsigned long long)snap[i].pc,
++                (unsigned long long)snap[i].count);
++#else
 +    for(i = 0; i < n && i < 15; i++)
 +        fprintf(stderr, "PROF   %5.1f%%  %c  0x%016llx\n",
 +                100.0 * snap[i].count / total,
 +                "US?M"[snap[i].priv & 3],
 +                (unsigned long long)snap[i].pc);
++#endif
 +    memset(riscv_prof_tab, 0, sizeof(riscv_prof_tab));
 +    riscv_prof_samples = riscv_prof_lost = 0;
 +}
@@ -85,7 +94,7 @@
  #if FLEN > 0
  #include "softfp.h"
  #endif
-@@ -189,6 +260,7 @@
+@@ -189,6 +269,7 @@
                           target_ulong *ppaddr, target_ulong vaddr,
                           int access)
  {
@@ -93,7 +102,7 @@
      int mode, levels, pte_bits, pte_idx, pte_mask, pte_size_log2, xwr, priv;
      int need_write, vaddr_shift, i, pte_addr_bits;
      target_ulong pte_addr, pte, vaddr_mask, paddr;
-@@ -383,6 +455,7 @@
+@@ -383,6 +464,7 @@
          } else if (pr->is_ram) {
              tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
              ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
@@ -101,7 +110,7 @@
              s->tlb_read[tlb_idx].vaddr = addr & ~PG_MASK;
              s->tlb_read[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
              switch(size_log2) {
-@@ -470,6 +543,7 @@
+@@ -470,6 +552,7 @@
              phys_mem_set_dirty_bit(pr, paddr - pr->addr);
              tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
              ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
@@ -109,7 +118,7 @@
              s->tlb_write[tlb_idx].vaddr = addr & ~PG_MASK;
              s->tlb_write[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
              switch(size_log2) {
-@@ -559,6 +633,7 @@
+@@ -559,6 +642,7 @@
      }
      tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
      ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
@@ -117,7 +126,7 @@
      s->tlb_code[tlb_idx].vaddr = addr & ~PG_MASK;
      s->tlb_code[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
      *pptr = ptr;
-@@ -597,11 +672,13 @@
+@@ -597,11 +681,13 @@
  
  static void tlb_flush_all(RISCVCPUState *s)
  {
@@ -131,7 +140,7 @@
      tlb_flush_all(s);
  }
  
-@@ -644,8 +721,31 @@
+@@ -644,8 +730,31 @@
                        MSTATUS_FS | \
                        MSTATUS_MPRV | MSTATUS_SUM | MSTATUS_MXR)
  
@@ -165,7 +174,7 @@
  
  /* return the complete mstatus with the SD bit */
  static target_ulong get_mstatus(RISCVCPUState *s, target_ulong mask)
-@@ -743,6 +843,36 @@
+@@ -743,6 +852,36 @@
          }
          val = (int64_t)s->insn_counter;
          break;
@@ -202,7 +211,7 @@
      case 0xc80: /* mcycleh */
      case 0xc82: /* minstreth */
          if (s->cur_xlen != 32)
-@@ -1226,8 +1356,67 @@
+@@ -1226,8 +1365,69 @@
  #include "riscv_cpu_template.h"
  #endif
  
@@ -216,7 +225,9 @@
 +    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 +}
 +
++#ifndef STATS_EVERY
 +#define STATS_EVERY 20000000ULL
++#endif
 +
 +static void glue(riscv_cpu_dump_stats, MAX_XLEN)(RISCVCPUState *s)
 +{
@@ -270,7 +281,7 @@
  #ifdef USE_GLOBAL_STATE
      s = &riscv_cpu_global_state;
  #endif
-@@ -1263,6 +1452,14 @@
+@@ -1263,6 +1463,14 @@
      return s->insn_counter;
  }
  
@@ -285,7 +296,7 @@
  static void glue(riscv_cpu_set_mip, MAX_XLEN)(RISCVCPUState *s, uint32_t mask)
  {
      s->mip |= mask;
-@@ -1343,6 +1540,7 @@
+@@ -1343,6 +1551,7 @@
      glue(riscv_cpu_get_power_down, MAX_XLEN),
      glue(riscv_cpu_get_misa, MAX_XLEN),
      glue(riscv_cpu_flush_tlb_write_range_ram, MAX_XLEN),

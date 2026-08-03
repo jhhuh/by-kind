@@ -154,7 +154,12 @@ The mechanism is measured, not guessed: `qemu-user` turns ordinary x86_64 into r
 **1.81 riscv64 instructions each**, but a single guest **syscall costs ~1,774** — about
 980× an ordinary instruction. Running the same loop natively as riscv64 splits that:
 **~234** is our kernel's own entry path and **~1,540 (87%) is `qemu-user` marshalling**.
-So the gap is `qemu-user`, not the emulated kernel, and it is attackable **without
+Profiling inside `qemu-user` says where: **81.6% is QEMU's own C**, 15.0% the kernel,
+and only **3.3% the translated guest code**. The hot regions are the TB hash lookup,
+`memset`, `cpu_exec`/`cpu_handle_exception`, `longjmp`, and `do_syscall` — i.e. the cost
+is **leaving and re-entering the JIT**, not executing the syscall. Bellard's emulator
+avoids it entirely by being an interpreter with no translation blocks. So the gap is
+`qemu-user`, not the emulated kernel, and it is attackable **without
 writing an x86_64 CPU** — which is just as well, because the published `x86_cpu.h` is
 32-bit and could not host one anyway (see
 [`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md)). Two caveats live in the write-up: his kernel is 6.19.3 with

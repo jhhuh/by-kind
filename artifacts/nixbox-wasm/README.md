@@ -53,6 +53,14 @@ timing mistake in this project came from measuring on the wrong axis:
 `TLBSTAT` and `TIMERSTAT` both carry `t=` in `CLOCK_MONOTONIC` ms. Do not divide an
 instruction count by a wall time you did not read from the same line.
 
+The PC profiler is **off by default and must stay off for benchmarks** — it costs a
+branch on every interpreted instruction. To profile, add `#define RISCV_PROF_ENABLE` (and
+`#define RISCV_PROF_FULL` for whole-table dumps rather than a top-15) above the
+`riscv_cpu_priv.h` include in `riscv_cpu.c`, rebuild, and **remove them again**. Then
+`bench/profile-syscall.py` captures `/proc/<pid>/maps` from the profiled process — needed
+because `qemu-x86_64` is a stripped static-PIE whose load base changes per run — and
+`bench/attribute.py` does the offline attribution.
+
 ## Run
 
 Needs a directory holding `rv.cfg`, `bbl64.bin`, `kernel-riscv64.bin` and the **split**

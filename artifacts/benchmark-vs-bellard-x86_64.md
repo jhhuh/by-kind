@@ -149,12 +149,57 @@ That makes the 11× attackable **without writing an x86_64 CPU**. As a bound: if
 instructions — 7.6× — which would put our syscall-bound figure near 8.6× native against
 Bellard's 5.8×, i.e. most of the gap closed.
 
-Two caveats on that bound. `getpid` is the cheapest syscall there is, so ~1,540 is
+One caveat on that bound: `getpid` is the cheapest syscall there is, so ~1,540 is
 essentially `qemu-user`'s *fixed* per-syscall cost; for syscalls that do real work the
 relative overhead is smaller, and 11× is therefore a worst case rather than a typical
-one. And where those 1,540 instructions actually go inside `qemu-user` has not been
-profiled — the PC profiler can attribute user-mode samples, so that is the next step, not
-a conclusion.
+one.
+
+### Where the 1,540 instructions go
+
+`qemu-x86_64` is a **stripped static-PIE**, so there are no symbols and the load base
+differs per run. The profiler run therefore also dumps `/proc/<pid>/maps` from the same
+process ([`bench/profile-syscall.py`](nixbox-wasm/bench/profile-syscall.py)), and
+attribution is done offline against it ([`bench/attribute.py`](nixbox-wasm/bench/attribute.py)),
+over the last 12 sampling windows so boot and process startup are excluded:
+
+```
+  81.58%   qemu-user's own compiled code
+  15.03%   S-mode -- the riscv64 kernel
+   3.34%   the JIT code cache (actual translated guest code)
+   0.05%   M-mode
+```
+
+The 15% kernel share independently reproduces the 234/1774 ≈ 13% from the native riscv64
+measurement, which is a useful check on both.
+
+**So it is neither translation nor the kernel — it is QEMU's own C.** Only 3.3% of the
+time is spent running translated guest code. Identifying the hot regions by disassembly
+(no symbols, so these are inferences from instruction patterns, with the evidence given):
+
+| share | region | identification |
+|---|---|---|
+| 8.5% | `0x136c70` | a 4-entry, 8-byte-stride associative scan — a `qht` bucket lookup, i.e. **TB hash lookup** |
+| 8.3% | `0x1e344a` | unmistakably **`memset`** (head/tail byte stores, then word fill) |
+| 7.8% | `0x0856a0` | loads `cpu->exception_index` and compares against **`0x10000` = `EXCP_INTERRUPT`**, then an indirect call through an ops table — **`cpu_exec` / `cpu_handle_exception`** |
+| 5.4% | `0x126008` | 1008-byte stack frame, saves `s0`–`s11` — a very large function, consistent with **`do_syscall`** |
+| 4.7% | `0x1ed014` | restores `s0`–`s11`, `sp`, `ra` and FP regs from a struct — **`longjmp`**, i.e. `cpu_loop_exit` |
+| 4.5% | `0x0e85ba` | calls the `0x136c70` scan with a mask of 31 — the **TB lookup wrapper** |
+
+The pattern is consistent across all of them: **the cost is leaving and re-entering
+QEMU's execution loop, not executing the syscall.** A guest `syscall` forces the
+translation block to exit, which means a `longjmp` out through `cpu_loop_exit`, the
+`cpu_exec` exception bookkeeping, and then a TB hash lookup to find the block to resume
+in — before `do_syscall` does the trivial work of calling `getpid`.
+
+That is exactly why Bellard's emulator is cheaper here and why the gap is specific to
+syscalls. He is running an *interpreter*: there are no translation blocks, so a `syscall`
+is just another instruction and the only cost is the guest kernel's own entry path. We
+pay a fixed ~1,540-instruction tax to leave and re-enter the JIT for every one.
+
+It also says what to optimise, and it is not `do_syscall`'s switch statement. The lever
+is the TB exit/re-entry path per syscall — or, more cheaply and without touching QEMU,
+**making the workload issue fewer syscalls**, which for nix package invocation means
+attacking process startup and path lookups rather than emulation.
 
 ## What we know about his kernel, and what we do not
 

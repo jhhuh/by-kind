@@ -74,7 +74,89 @@ statement is that the ceiling is real but workload-specific, and cheaper things 
 tried first — `qemu-user` syscall path costs, and the emulated kernel's own syscall entry
 cost, are both attackable without writing an x86_64 interpreter.
 
-**Two caveats, both of which make the payoff look smaller than the table suggests:**
+## Does his interpreter special-case `syscall`?
+
+A fair worry: if his emulator shortcut the `syscall` instruction — dispatching it in the
+emulator instead of running the guest kernel's entry path — the syscall column would be
+measuring two different things. The instruction counts say it does not.
+
+Both loops were disassembled to get exact guest instruction counts per round: **17** for
+the compute loop, **8** for the syscall loop (7 ALU plus one `syscall`).
+
+*His side*, derived from the compute rate. 20,000,000 × 17 = 340 M guest instructions in
+2,373 ms is **143 Minsn/s**. The syscall run's 500,000 × 8 = 4 M loop instructions
+therefore account for ~28 ms of the 798 ms, leaving **~220 emulated instructions per
+syscall round trip**. That is an ordinary cost for a Linux `entry_SYSCALL_64` →
+`sys_getpid` → `sysretq` path in a kernel built without PTI and retpolines, and it is far
+too expensive to be a shortcut — a paravirtual dispatch would be a handful of
+instructions, not a couple of hundred. (This is an upper bound on the count: kernel entry
+uses `swapgs`, pushes and MSR access, which likely cost his interpreter more per
+instruction than the ALU ops the 143 Minsn/s figure came from, so the true count is
+probably lower still — but lower for that reason, not because of special-casing.)
+
+*Our side*, measured exactly rather than derived, using TinyEMU's own instruction counter
+([`bench/count-insn.py`](nixbox-wasm/bench/count-insn.py) interpolates `insn=` from the
+wall-clock-keyed `TLBSTAT` dumps at each marker):
+
+```
+compute   30.8 riscv64 instructions per round of 17 x86 instructions
+                                        = 1.81 riscv64 insns per emulated x86 insn
+syscall  1787.0 riscv64 instructions per round of 8 x86 instructions
+                                        = ~1,774 for the `syscall` alone
+```
+
+So `qemu-user` turns ordinary x86_64 into riscv64 at **1.81 instructions each** — very
+good, and why the compute case is a wash — but a single guest syscall costs **~1,774
+riscv64 instructions**, roughly **980× an ordinary instruction**.
+
+That is the whole of the 11×, and no special-casing on his side is needed to explain it.
+Our stack pays for two kernel entries' worth of work where his pays for one: `qemu-user`
+must leave the translated block, save guest state, run its `do_syscall` dispatch, and
+then issue a *real* riscv64 syscall into the emulated riscv64 kernel — whose own entry
+path is itself interpreted — before restoring and re-entering translated code. How that
+~1,774 splits between `qemu-user` marshalling and our riscv64 kernel's entry cost is not
+separated here; a lean riscv64 entry would be a couple of hundred instructions, which
+would put the bulk of it in `qemu-user`, but that is inference, not measurement.
+
+## What we know about his kernel, and what we do not
+
+His side runs **his** kernel, and that is an uncontrolled variable. What could be
+established from the image:
+
+```
+Linux version 6.19.3 (bellard@gpu-server4)
+  (gcc 13.3.1 20240611 (Red Hat 13.3.1-2), GNU ld 2.40-21.el8)
+  #17 PREEMPT_DYNAMIC Mon Mar 9 17:12:35 CET 2026
+```
+
+- **It is genuinely x86_64**, and this does not rest on the filename: the benchmarks are
+  `ELF 64-bit LSB, x86-64, statically linked`, his emulator ran them, and the checksums
+  match native exactly. A 32-bit kernel could not have executed them.
+- The bzImage is **uncompressed**, and there is no `IKCFG_ST`, so `CONFIG_IKCONFIG` is
+  off and **his `.config` cannot be read**.
+- A string scan turns up **no modification markers** — every "patch" hit is ordinary
+  upstream microcode/text-patching text. That is weak evidence: absence of markers is
+  not proof of an unmodified tree.
+
+**So we cannot show his kernel is vanilla.** It is also version **6.19.3 against our
+6.12.77**, with an unknown config, so the two sides differ in kernel version and
+configuration as well as in emulator and ISA.
+
+This is not fatal, because it does not touch both results equally:
+
+- **The compute-bound number (1.07×) is essentially immune.** It is a userspace loop
+  that issues one `write` and one `exit`; the kernel is barely involved.
+- **The syscall-bound number (11.2×) is exposed.** Kernel entry cost is a large part of
+  what it measures, so some unknown share of that 11× could be kernel version or config
+  rather than emulator. Treat 11.2× as an upper bound on the *emulator* difference, not
+  as a measurement of it.
+
+Controlling this properly means running the same kernel version and config on both sides,
+which is not directly possible across ISAs; the nearest approach is booting a vanilla
+x86_64 kernel of a known version under his emulator. Not done.
+
+**Two further caveats, both of which make the payoff look smaller than the table
+suggests:**
 
 - Bellard's core is closed and hand-optimised over many years. A core we write is
   unlikely to match it, so 11× is an **upper** bound on what implementing

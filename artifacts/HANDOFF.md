@@ -148,7 +148,15 @@ binary in both, startup subtracted, timed on the host:
 So implementing `x86_cpu_interp` in TinyEMU buys **essentially nothing** for
 compute-bound work, and up to ~11× only for syscall-bound work — which is unfortunately
 the shape of real nix package use. His core is closed and hand-optimised, so 11× is an
-*upper* bound on the payoff. Full write-up and caveats:
+*upper* bound on the payoff.
+
+The mechanism is measured, not guessed: `qemu-user` turns ordinary x86_64 into riscv64 at
+**1.81 riscv64 instructions each**, but a single guest **syscall costs ~1,774** — about
+980× an ordinary instruction — because our stack pays for two kernel entries where a
+direct emulator pays for one. Two caveats live in the write-up: his kernel is 6.19.3 with
+an unreadable config against our 6.12.77, so the syscall number has kernel version and
+config baked in as well as emulator; and the compute number is essentially immune to that
+because it barely enters the kernel. Full detail:
 [`benchmark-vs-bellard-x86_64.md`](benchmark-vs-bellard-x86_64.md).
 
 ## Reading order

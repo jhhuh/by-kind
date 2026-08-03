@@ -11,6 +11,8 @@ and the emulator's t= are directly comparable.
 import os, pty, re, select, subprocess, sys, time
 
 BIN0, BINN, ROUNDS = sys.argv[1], sys.argv[2], int(sys.argv[3])
+# empty PREFIX runs the binary natively in the guest (no qemu-user)
+PREFIX = os.environ.get('PREFIX', '/mnt/qemu-x86_64 ')
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMU = os.path.join(HERE, '..', 'tinyemu-2019-12-21', 'temu')
 CFG = os.path.join(HERE, 'rv-native.cfg')
@@ -40,9 +42,9 @@ while time.monotonic() < deadline:
             sent = True
             os.write(mfd, (
                 'mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072 /dev/root /mnt\n'
-                f'/mnt/qemu-x86_64 /mnt/{BIN0}\n'
-                f'/mnt/qemu-x86_64 /mnt/{BIN0}\n'
-                f'/mnt/qemu-x86_64 /mnt/{BINN}\n').encode())
+                f'{PREFIX}/mnt/{BIN0}\n'
+                f'{PREFIX}/mnt/{BIN0}\n'
+                f'{PREFIX}/mnt/{BINN}\n').encode())
     if len(marks) >= 3:
         break
 p.kill(); p.wait(); errf.close()

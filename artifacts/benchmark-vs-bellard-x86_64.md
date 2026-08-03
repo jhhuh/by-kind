@@ -113,10 +113,48 @@ That is the whole of the 11×, and no special-casing on his side is needed to ex
 Our stack pays for two kernel entries' worth of work where his pays for one: `qemu-user`
 must leave the translated block, save guest state, run its `do_syscall` dispatch, and
 then issue a *real* riscv64 syscall into the emulated riscv64 kernel — whose own entry
-path is itself interpreted — before restoring and re-entering translated code. How that
-~1,774 splits between `qemu-user` marshalling and our riscv64 kernel's entry cost is not
-separated here; a lean riscv64 entry would be a couple of hundred instructions, which
-would put the bulk of it in `qemu-user`, but that is inference, not measurement.
+path is itself interpreted — before restoring and re-entering translated code.
+
+### Splitting the 1,774
+
+The same loop was cross-built for **riscv64** and run directly in the guest with no
+`qemu-user` in the path ([`bench/rvsyscallbench.c`](nixbox-wasm/bench/rvsyscallbench.c)),
+which measures our kernel's entry cost on its own. Its loop is 7 riscv64 instructions,
+one being `ecall`:
+
+```
+239.6 riscv64 instructions per native round
+  - 6 for the loop itself
+  = ~234 for a native riscv64 syscall (kernel entry, sys_getpid, exit)
+```
+
+So:
+
+```
+  x86_64 syscall through qemu-user      1,774 riscv64 instructions
+  native riscv64 syscall                  234
+  ------------------------------------------
+  qemu-user marshalling                 1,540      <- 87% of the cost
+```
+
+**The emulated kernel is not the problem; `qemu-user` is.** Our riscv64 kernel's entry
+path costs ~234 interpreted instructions, which is in the same range as the ~220 derived
+for Bellard's x86_64 kernel entry — two lean Linux syscall paths, as expected, and a
+useful consistency check on that derived figure. Everything above that is `qemu-user`
+leaving the translation block, saving and restoring guest CPU state, and running its
+`do_syscall` dispatch.
+
+That makes the 11× attackable **without writing an x86_64 CPU**. As a bound: if
+`qemu-user`'s per-syscall overhead vanished, the syscall path would go from 1,774 to 234
+instructions — 7.6× — which would put our syscall-bound figure near 8.6× native against
+Bellard's 5.8×, i.e. most of the gap closed.
+
+Two caveats on that bound. `getpid` is the cheapest syscall there is, so ~1,540 is
+essentially `qemu-user`'s *fixed* per-syscall cost; for syscalls that do real work the
+relative overhead is smaller, and 11× is therefore a worst case rather than a typical
+one. And where those 1,540 instructions actually go inside `qemu-user` has not been
+profiled — the PC profiler can attribute user-mode samples, so that is the next step, not
+a conclusion.
 
 ## What we know about his kernel, and what we do not
 

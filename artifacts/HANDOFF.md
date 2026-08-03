@@ -152,8 +152,12 @@ the shape of real nix package use. His core is closed and hand-optimised, so 11�
 
 The mechanism is measured, not guessed: `qemu-user` turns ordinary x86_64 into riscv64 at
 **1.81 riscv64 instructions each**, but a single guest **syscall costs ~1,774** — about
-980× an ordinary instruction — because our stack pays for two kernel entries where a
-direct emulator pays for one. Two caveats live in the write-up: his kernel is 6.19.3 with
+980× an ordinary instruction. Running the same loop natively as riscv64 splits that:
+**~234** is our kernel's own entry path and **~1,540 (87%) is `qemu-user` marshalling**.
+So the gap is `qemu-user`, not the emulated kernel, and it is attackable **without
+writing an x86_64 CPU** — which is just as well, because the published `x86_cpu.h` is
+32-bit and could not host one anyway (see
+[`prior-art-browser-x86-emulators.md`](prior-art-browser-x86-emulators.md)). Two caveats live in the write-up: his kernel is 6.19.3 with
 an unreadable config against our 6.12.77, so the syscall number has kernel version and
 config baked in as well as emulator; and the compute number is essentially immune to that
 because it barely enters the kernel. Full detail:

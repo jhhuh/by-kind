@@ -1,13 +1,16 @@
---- riscv_machine.c.pre_rng	2026-08-03 10:02:17.839311202 +0900
-+++ riscv_machine.c	2026-08-03 09:54:00.304504604 +0900
-@@ -38,6 +38,35 @@
+--- riscv_machine.c.pre_rng	2026-08-03 10:22:42.146607488 +0900
++++ riscv_machine.c	2026-08-03 10:22:29.719685474 +0900
+@@ -38,6 +38,38 @@
  #include "virtio.h"
  #include "machine.h"
  
-+/* Fill buf with host randomness for the device-tree rng-seed. Emscripten
-+   maps getentropy() onto crypto.getRandomValues(), so this works in the
-+   browser build too. The last resort is not cryptographic and is only
-+   there so a host missing both still boots to a seeded CRNG. */
++/* Fill buf with host randomness for the device-tree rng-seed. Under
++   Emscripten getentropy() goes through random_get -> randomFill, which is
++   crypto.getRandomValues() in a browser and crypto.randomFillSync() under
++   node, so this works in the wasm build too -- verified by checking that
++   /dev/random does not block in the wasm guest. The /dev/urandom fallback
++   is dead there (NO_FILESYSTEM), and the last resort is not cryptographic;
++   it is only so a host missing both still boots to a seeded CRNG. */
 +static void get_random_bytes_host(uint8_t *buf, int len)
 +{
 +    int i;
@@ -36,7 +39,7 @@
  /* RISCV machine */
  
  typedef struct RISCVMachine {
-@@ -759,6 +788,19 @@
+@@ -787,6 +819,20 @@
          fdt_prop_tab_u64(s, "linux,initrd-end", initrd_start + initrd_size);
      }
  
@@ -53,6 +56,7 @@
 +        get_random_bytes_host(seed, sizeof(seed));
 +        fdt_prop(s, "rng-seed", seed, sizeof(seed));
 +    }
- 
++
      fdt_end_node(s); /* chosen */
      
+     fdt_end_node(s); /* / */

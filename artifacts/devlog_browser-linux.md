@@ -151,6 +151,28 @@ qemu-x86_64 busybox md5sum (1 MB)      never            0.95 s      -
 Digest verified against the host (`d8236eb58cc8ef2ac907ce4b71f11910`) and `uname -m`
 reports `x86_64`. 4.15 is unchanged, so neither fix regresses it.
 
+### Verified in the wasm build, not just natively
+
+Everything above was measured with the native `temu`, and the deliverable is the wasm
+one, so both fixes were re-checked there: rebuilt `js/temu.wasm` (166,364 bytes) with
+both patches and booted the 6.12 kernel under `node-run.cjs`. It reaches a prompt,
+`entropy_avail` is 256, and — the direct test of the semantics that were hanging —
+
+```
+/ # dd if=/dev/random of=/dev/null bs=8 count=1
+8 bytes (8B) copied, 0.000275 seconds
+```
+
+`/dev/random` blocks until the CRNG is seeded on modern kernels, so returning in 0.28 ms
+is the functional confirmation. Booting at all also confirms the extra FDT reserve entry
+does not overrun the device-tree buffer in low RAM.
+
+On how the seed is obtained under Emscripten: `getentropy()` resolves through
+`random_get` → `randomFill`, which the generated glue defines as
+`crypto.getRandomValues()` in a browser and `crypto.randomFillSync()` under node. The
+`/dev/urandom` fallback is dead in wasm (`NO_FILESYSTEM=1`). My first version of that
+comment asserted the mapping without checking it.
+
 ### One hypothesis checked and killed on the way
 
 `mcounteren`/`scounteren` were both `0x7` — the TM bit is set, so U-mode `rdtime` was

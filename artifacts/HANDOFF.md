@@ -82,7 +82,9 @@ qemu-x86_64 busybox md5sum (1 MB)  never            0.95 s      -
 ```
 
 Digest verified against the host, `uname -m` reports `x86_64`, and 4.15 is unchanged.
-It was **two more TinyEMU bugs**, neither related to emulation speed:
+Both fixes were re-checked in the **wasm** build too, not just natively: 6.12 boots
+under `node-run.cjs` and `/dev/random` returns in 0.28 ms instead of blocking. It was
+**two more TinyEMU bugs**, neither related to emulation speed:
 
 - **`tinyemu-dt-rng-seed.patch`** — TinyEMU has no entropy source of any kind, and
   Linux ≥5.x blocks `getrandom()` in `wait_for_random_bytes()` until the CRNG is
@@ -130,7 +132,9 @@ frozen, so there was no outstanding I/O either. That reframing is what led to
 
 ## Reading order
 
-1. [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md) — the measurements
+1. [`experiment-results-2026-08-02.md`](experiment-results-2026-08-02.md) — the
+   measurements. **Predates 2026-08-03**; where it and the devlog disagree, the devlog
+   wins.
 2. [`devlog_browser-linux.md`](devlog_browser-linux.md) — the running journal, and the
    only place the two 2026-08-03 bugs are written up in full
 3. [`modern-kernel-on-tinyemu.md`](modern-kernel-on-tinyemu.md) — kernel build, the first

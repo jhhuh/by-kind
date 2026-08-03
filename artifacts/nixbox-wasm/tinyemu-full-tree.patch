@@ -1,0 +1,646 @@
+--- a/riscv_cpu.c	2019-12-22 02:23:54.000000000 +0900
++++ b/riscv_cpu.c	2026-08-03 10:08:03.421129721 +0900
+@@ -28,6 +28,7 @@
+ #include <inttypes.h>
+ #include <assert.h>
+ #include <fcntl.h>
++#include <time.h>
+ 
+ #include "cutils.h"
+ #include "iomem.h"
+@@ -50,6 +51,76 @@
+ 
+ #include "riscv_cpu_priv.h"
+ 
++/* ---- PC sampling profiler ------------------------------------------
++   Samples the program counter every RISCV_PROF_STRIDE instructions into an
++   open-addressed table keyed on (pc, priv). Supervisor samples resolve
++   against the kernel's System.map; user samples are the workload. */
++#define RISCV_PROF_STRIDE 997
++#define RISCV_PROF_BITS   14
++#define RISCV_PROF_SIZE   (1 << RISCV_PROF_BITS)
++
++typedef struct {
++    uint64_t pc;
++    uint64_t count;
++    uint8_t priv;
++    uint8_t used;
++} RISCVProfEntry;
++
++static RISCVProfEntry riscv_prof_tab[RISCV_PROF_SIZE];
++static uint64_t riscv_prof_samples, riscv_prof_lost;
++
++static void riscv_prof_sample(uint64_t pc, int priv)
++{
++    uint64_t h = (pc * 0x9E3779B97F4A7C15ULL) >> (64 - RISCV_PROF_BITS);
++    int i;
++    riscv_prof_samples++;
++    for(i = 0; i < 64; i++) {
++        RISCVProfEntry *e = &riscv_prof_tab[(h + i) & (RISCV_PROF_SIZE - 1)];
++        if (!e->used) {
++            e->used = 1; e->pc = pc; e->priv = (uint8_t)priv; e->count = 1;
++            return;
++        }
++        if (e->pc == pc && e->priv == priv) { e->count++; return; }
++    }
++    riscv_prof_lost++;
++}
++
++static int riscv_prof_cmp(const void *a, const void *b)
++{
++    uint64_t ca = ((const RISCVProfEntry *)a)->count;
++    uint64_t cb = ((const RISCVProfEntry *)b)->count;
++    return (cb > ca) - (cb < ca);
++}
++
++static void riscv_prof_dump(void)
++{
++    static RISCVProfEntry snap[RISCV_PROF_SIZE];
++    uint64_t by_priv[4] = {0, 0, 0, 0};
++    uint64_t total = 0;
++    int i, n = 0;
++
++    for(i = 0; i < RISCV_PROF_SIZE; i++)
++        if (riscv_prof_tab[i].used) {
++            snap[n++] = riscv_prof_tab[i];
++            by_priv[riscv_prof_tab[i].priv & 3] += riscv_prof_tab[i].count;
++            total += riscv_prof_tab[i].count;
++        }
++    if (!total)
++        return;
++    qsort(snap, n, sizeof(snap[0]), riscv_prof_cmp);
++    fprintf(stderr, "PROF total=%llu U=%.1f%% S=%.1f%% M=%.1f%% distinct=%d lost=%llu\n",
++            (unsigned long long)total,
++            100.0 * by_priv[0] / total, 100.0 * by_priv[1] / total,
++            100.0 * by_priv[3] / total, n, (unsigned long long)riscv_prof_lost);
++    for(i = 0; i < n && i < 15; i++)
++        fprintf(stderr, "PROF   %5.1f%%  %c  0x%016llx\n",
++                100.0 * snap[i].count / total,
++                "US?M"[snap[i].priv & 3],
++                (unsigned long long)snap[i].pc);
++    memset(riscv_prof_tab, 0, sizeof(riscv_prof_tab));
++    riscv_prof_samples = riscv_prof_lost = 0;
++}
++
+ #if FLEN > 0
+ #include "softfp.h"
+ #endif
+@@ -189,6 +260,7 @@
+                          target_ulong *ppaddr, target_ulong vaddr,
+                          int access)
+ {
++    s->n_page_walk++;
+     int mode, levels, pte_bits, pte_idx, pte_mask, pte_size_log2, xwr, priv;
+     int need_write, vaddr_shift, i, pte_addr_bits;
+     target_ulong pte_addr, pte, vaddr_mask, paddr;
+@@ -383,6 +455,7 @@
+         } else if (pr->is_ram) {
+             tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+             ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++            s->n_miss_read++;
+             s->tlb_read[tlb_idx].vaddr = addr & ~PG_MASK;
+             s->tlb_read[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+             switch(size_log2) {
+@@ -470,6 +543,7 @@
+             phys_mem_set_dirty_bit(pr, paddr - pr->addr);
+             tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+             ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++            s->n_miss_write++;
+             s->tlb_write[tlb_idx].vaddr = addr & ~PG_MASK;
+             s->tlb_write[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+             switch(size_log2) {
+@@ -559,6 +633,7 @@
+     }
+     tlb_idx = (addr >> PG_SHIFT) & (TLB_SIZE - 1);
+     ptr = pr->phys_mem + (uintptr_t)(paddr - pr->addr);
++    s->n_miss_code++;
+     s->tlb_code[tlb_idx].vaddr = addr & ~PG_MASK;
+     s->tlb_code[tlb_idx].mem_addend = (uintptr_t)ptr - addr;
+     *pptr = ptr;
+@@ -597,11 +672,13 @@
+ 
+ static void tlb_flush_all(RISCVCPUState *s)
+ {
++    s->n_flush_all++;
+     tlb_init(s);
+ }
+ 
+ static void tlb_flush_vaddr(RISCVCPUState *s, target_ulong vaddr)
+ {
++    s->n_flush_vaddr++;
+     tlb_flush_all(s);
+ }
+ 
+@@ -644,8 +721,31 @@
+                       MSTATUS_FS | \
+                       MSTATUS_MPRV | MSTATUS_SUM | MSTATUS_MXR)
+ 
+-/* cycle and insn counters */
+-#define COUNTEREN_MASK ((1 << 0) | (1 << 2))
++/* Read the machine's time source. Falls back to the instruction counter scaled
++   the same way riscv_machine.c's rtc_get_time() does when no source is set. */
++/* Refresh the cached time at most once every this many instructions. The Linux
++   riscv vDSO reads rdtime for every clock_gettime(), and the machine's time
++   source is a host syscall, so an uncached read costs a syscall per guest
++   instruction in hot paths — measured at ~100x slowdown running qemu-user.
++   The value stays monotonic because the underlying clock is, and a spin-wait
++   still makes progress because insn_counter advances. */
++#ifndef TIME_CACHE_INSNS
++#define TIME_CACHE_INSNS 1024
++#endif
++
++static uint64_t glue(riscv_cpu_get_time, MAX_XLEN)(RISCVCPUState *s)
++{
++    if (!s->get_time)
++        return s->insn_counter / 16;
++    if (s->insn_counter >= s->time_cache_next) {
++        s->time_cache = s->get_time(s->get_time_opaque);
++        s->time_cache_next = s->insn_counter + TIME_CACHE_INSNS;
++    }
++    return s->time_cache;
++}
++
++/* cycle, time and insn counters (CY | TM | IR) */
++#define COUNTEREN_MASK ((1 << 0) | (1 << 1) | (1 << 2))
+ 
+ /* return the complete mstatus with the SD bit */
+ static target_ulong get_mstatus(RISCVCPUState *s, target_ulong mask)
+@@ -743,6 +843,36 @@
+         }
+         val = (int64_t)s->insn_counter;
+         break;
++    case 0xc01: /* time */
++        {
++            uint32_t counteren;
++            if (s->priv < PRV_M) {
++                if (s->priv < PRV_S)
++                    counteren = s->scounteren;
++                else
++                    counteren = s->mcounteren;
++                if (((counteren >> (csr & 0x1f)) & 1) == 0)
++                    goto invalid_csr;
++            }
++        }
++        val = (int64_t)glue(riscv_cpu_get_time, MAX_XLEN)(s);
++        break;
++    case 0xc81: /* timeh */
++        if (s->cur_xlen != 32)
++            goto invalid_csr;
++        {
++            uint32_t counteren;
++            if (s->priv < PRV_M) {
++                if (s->priv < PRV_S)
++                    counteren = s->scounteren;
++                else
++                    counteren = s->mcounteren;
++                if (((counteren >> (csr & 0x1f)) & 1) == 0)
++                    goto invalid_csr;
++            }
++        }
++        val = glue(riscv_cpu_get_time, MAX_XLEN)(s) >> 32;
++        break;
+     case 0xc80: /* mcycleh */
+     case 0xc82: /* minstreth */
+         if (s->cur_xlen != 32)
+@@ -1226,8 +1356,65 @@
+ #include "riscv_cpu_template.h"
+ #endif
+ 
++extern uint64_t g_n_sleepcall;
++extern uint64_t g_n_vq_kick, g_n_vq_complete, g_n_irq_raise, g_n_irq_ack;
++
++static uint64_t riscv_wallclock_ms(void)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++}
++
++#define STATS_EVERY 20000000ULL
++
++static void glue(riscv_cpu_dump_stats, MAX_XLEN)(RISCVCPUState *s)
++{
++    fprintf(stderr,
++            "TLBSTAT t=%llu sleepcall=%llu kick=%llu vqdone=%llu irq=%llu irqack=%llu insn=%llu walk=%llu flush_all=%llu flush_va=%llu "
++            "miss_r=%llu miss_w=%llu miss_c=%llu\n",
++            (unsigned long long)riscv_wallclock_ms(),
++            (unsigned long long)g_n_sleepcall,
++            (unsigned long long)g_n_vq_kick,
++            (unsigned long long)g_n_vq_complete,
++            (unsigned long long)g_n_irq_raise,
++            (unsigned long long)g_n_irq_ack,
++            (unsigned long long)s->insn_counter,
++            (unsigned long long)s->n_page_walk,
++            (unsigned long long)s->n_flush_all,
++            (unsigned long long)s->n_flush_vaddr,
++            (unsigned long long)s->n_miss_read,
++            (unsigned long long)s->n_miss_write,
++            (unsigned long long)s->n_miss_code);
++    /* trap state + the 32 bytes the PC is sitting in, so an M-mode spin can
++       be compared against the BIOS image on disk */
++    {
++        int i;
++        fprintf(stderr, "TRAPSTATE priv=%d pc=0x%llx mtvec=0x%llx mepc=0x%llx "
++                "mcause=0x%llx mtval=0x%llx medeleg=0x%x mcounteren=0x%x scounteren=0x%x\n",
++                s->priv,
++                (unsigned long long)(uint64_t)s->pc,
++                (unsigned long long)(uint64_t)s->mtvec,
++                (unsigned long long)(uint64_t)s->mepc,
++                (unsigned long long)(uint64_t)s->mcause,
++                (unsigned long long)(uint64_t)s->mtval,
++                s->medeleg, s->mcounteren, s->scounteren);
++        fprintf(stderr, "MEM@0x80000000");
++        for(i = 0; i < 8; i++)
++            fprintf(stderr, " %08x", phys_read_u32(s, 0x80000000 + i * 4));
++        fprintf(stderr, "\n");
++    }
++}
++
+ static void glue(riscv_cpu_interp, MAX_XLEN)(RISCVCPUState *s, int n_cycles)
+ {
++    if (s->insn_counter >= s->stats_next) {
++        if (s->stats_next != 0) {
++            glue(riscv_cpu_dump_stats, MAX_XLEN)(s);
++            riscv_prof_dump();
++        }
++        s->stats_next = s->insn_counter + STATS_EVERY;
++    }
+ #ifdef USE_GLOBAL_STATE
+     s = &riscv_cpu_global_state;
+ #endif
+@@ -1263,6 +1450,14 @@
+     return s->insn_counter;
+ }
+ 
++static void glue(riscv_cpu_set_get_time, MAX_XLEN)(RISCVCPUState *s,
++                                                   uint64_t (*get_time)(void *opaque),
++                                                   void *opaque)
++{
++    s->get_time = get_time;
++    s->get_time_opaque = opaque;
++}
++
+ static void glue(riscv_cpu_set_mip, MAX_XLEN)(RISCVCPUState *s, uint32_t mask)
+ {
+     s->mip |= mask;
+@@ -1343,6 +1538,7 @@
+     glue(riscv_cpu_get_power_down, MAX_XLEN),
+     glue(riscv_cpu_get_misa, MAX_XLEN),
+     glue(riscv_cpu_flush_tlb_write_range_ram, MAX_XLEN),
++    glue(riscv_cpu_set_get_time, MAX_XLEN),
+ };
+ 
+ #if CONFIG_RISCV_MAX_XLEN == MAX_XLEN
+--- a/riscv_cpu.h	2019-12-22 02:23:54.000000000 +0900
++++ b/riscv_cpu.h	2026-08-02 19:29:04.473520061 +0900
+@@ -55,6 +55,9 @@
+     uint32_t (*riscv_cpu_get_misa)(RISCVCPUState *s);
+     void (*riscv_cpu_flush_tlb_write_range_ram)(RISCVCPUState *s,
+                                                 uint8_t *ram_ptr, size_t ram_size);
++    void (*riscv_cpu_set_get_time)(RISCVCPUState *s,
++                                   uint64_t (*get_time)(void *opaque),
++                                   void *opaque);
+ } RISCVCPUClass;
+ 
+ typedef struct {
+@@ -115,4 +118,15 @@
+     c->riscv_cpu_flush_tlb_write_range_ram(s, ram_ptr, ram_size);
+ }
+ 
++/* Supply the machine's time source so the CPU can implement the 'time' CSR
++   (0xc01 / 0xc81). Without it TinyEMU relies on M-mode firmware trapping and
++   emulating rdtime, which breaks modern guests whose vDSO reads it from U-mode. */
++static inline void riscv_cpu_set_get_time(RISCVCPUState *s,
++                                          uint64_t (*get_time)(void *opaque),
++                                          void *opaque)
++{
++    const RISCVCPUClass *c = ((RISCVCPUCommonState *)s)->class_ptr;
++    c->riscv_cpu_set_get_time(s, get_time, opaque);
++}
++
+ #endif /* RISCV_CPU_H */
+--- a/riscv_cpu_priv.h	2019-12-22 02:23:54.000000000 +0900
++++ b/riscv_cpu_priv.h	2026-08-03 10:03:31.451845649 +0900
+@@ -235,6 +235,19 @@
+ 
+     PhysMemoryMap *mem_map;
+ 
++    /* machine-supplied time source for the 'time' CSR, with a short cache:
++       the source is a host clock_gettime() and rdtime appears in hot loops */
++    uint64_t (*get_time)(void *opaque);
++    void *get_time_opaque;
++    uint64_t time_cache;
++    uint64_t time_cache_next;
++
++    /* instrumentation */
++    uint32_t prof_ctr;
++    uint64_t n_page_walk, n_flush_all, n_flush_vaddr;
++    uint64_t n_miss_read, n_miss_write, n_miss_code;
++    uint64_t stats_next;
++
+     TLBEntry tlb_read[TLB_SIZE];
+     TLBEntry tlb_write[TLB_SIZE];
+     TLBEntry tlb_code[TLB_SIZE];
+--- a/riscv_cpu_template.h	2019-12-22 02:23:54.000000000 +0900
++++ b/riscv_cpu_template.h	2026-08-03 10:03:31.452845643 +0900
+@@ -287,6 +287,13 @@
+             insn = get_insn32(code_ptr);
+         }
+         s->n_cycles--;
++        /* PC sampling: a dedicated countdown, not a mask on n_cycles --
++           n_cycles is reset on every entry to this function, so a mask
++           would re-phase constantly and not be a fixed stride. */
++        if (unlikely(s->prof_ctr-- == 0)) {
++            s->prof_ctr = RISCV_PROF_STRIDE;
++            riscv_prof_sample(GET_PC(), s->priv);
++        }
+ #if 0
+         if (1) {
+ #ifdef CONFIG_LOGFILE
+--- a/riscv_machine.c	2019-12-22 02:23:54.000000000 +0900
++++ b/riscv_machine.c	2026-08-03 10:22:29.719685474 +0900
+@@ -38,6 +38,38 @@
+ #include "virtio.h"
+ #include "machine.h"
+ 
++/* Fill buf with host randomness for the device-tree rng-seed. Under
++   Emscripten getentropy() goes through random_get -> randomFill, which is
++   crypto.getRandomValues() in a browser and crypto.randomFillSync() under
++   node, so this works in the wasm build too -- verified by checking that
++   /dev/random does not block in the wasm guest. The /dev/urandom fallback
++   is dead there (NO_FILESYSTEM), and the last resort is not cryptographic;
++   it is only so a host missing both still boots to a seeded CRNG. */
++static void get_random_bytes_host(uint8_t *buf, int len)
++{
++    int i;
++    uint64_t x;
++    struct timespec ts;
++    FILE *f;
++
++    if (getentropy(buf, len) == 0)
++        return;
++    f = fopen("/dev/urandom", "rb");
++    if (f) {
++        size_t n = fread(buf, 1, len, f);
++        fclose(f);
++        if (n == (size_t)len)
++            return;
++    }
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    x = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
++    x ^= (uint64_t)(uintptr_t)buf * 0x9E3779B97F4A7C15ULL;
++    for(i = 0; i < len; i++) {
++        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
++        buf[i] = (uint8_t)x;
++    }
++}
++
+ /* RISCV machine */
+ 
+ typedef struct RISCVMachine {
+@@ -79,6 +111,10 @@
+ #define RTC_FREQ_DIV 16 /* arbitrary, relative to CPU freq to have a
+                            10 MHz frequency */
+ 
++/* timer instrumentation */
++static uint64_t g_n_mtip, g_n_timecmp_w;
++uint64_t g_n_sleepcall;
++extern uint64_t g_n_vq_kick, g_n_vq_complete, g_n_irq_raise, g_n_irq_ack;
+ static uint64_t rtc_get_real_time(RISCVMachine *s)
+ {
+     struct timespec ts;
+@@ -87,6 +123,14 @@
+         (ts.tv_nsec / (1000000000 / RTC_FREQ));
+ }
+ 
++static uint64_t rtc_get_time(RISCVMachine *m);
++
++/* thunk so the CPU can read the same clock the CLINT's mtime exposes */
++static uint64_t riscv_machine_get_time(void *opaque)
++{
++    return rtc_get_time((RISCVMachine *)opaque);
++}
++
+ static uint64_t rtc_get_time(RISCVMachine *m)
+ {
+     uint64_t val;
+@@ -226,10 +270,12 @@
+     assert(size_log2 == 2);
+     switch(offset) {
+     case 0x4000:
++        g_n_timecmp_w++;
+         m->timecmp = (m->timecmp & ~0xffffffff) | val;
+         riscv_cpu_reset_mip(m->cpu_state, MIP_MTIP);
+         break;
+     case 0x4004:
++        g_n_timecmp_w++;
+         m->timecmp = (m->timecmp & 0xffffffff) | ((uint64_t)val << 32);
+         riscv_cpu_reset_mip(m->cpu_state, MIP_MTIP);
+         break;
+@@ -356,6 +402,9 @@
+     char *string_table;
+     int string_table_len;
+     int string_table_size;
++
++    /* optional entry for the FDT memory reservation block */
++    uint64_t rsv_addr, rsv_size;
+ } FDTState;
+ 
+ static FDTState *fdt_init(void)
+@@ -525,6 +574,12 @@
+ }
+ 
+ /* write the FDT to 'dst1'. return the FDT size in bytes */
++static uint64_t fdt_be64(uint64_t v)
++{
++    return ((uint64_t)cpu_to_be32((uint32_t)v) << 32) |
++        cpu_to_be32((uint32_t)(v >> 32));
++}
++
+ int fdt_output(FDTState *s, uint8_t *dst)
+ {
+     struct fdt_header *h;
+@@ -560,7 +615,21 @@
+     }
+     h->off_mem_rsvmap = cpu_to_be32(pos);
+     re = (struct fdt_reserve_entry *)(dst + pos);
+-    re->address = 0; /* no reserved entry */
++    /* Reserve the firmware. The BIOS is loaded at RAM_BASE_ADDR and the
++       kernel at the next 2 MB boundary above it, but nothing here used to
++       tell the guest that the gap is occupied, so Linux treated it as free
++       RAM and eventually allocated over BBL's text. That is silent until
++       the first trap the firmware still owns -- medeleg does not delegate
++       illegal-instruction or access faults -- at which point mtvec jumps
++       into what is now heap data and the machine spins in M-mode forever.
++       4.15 happened not to allocate there; 6.12 does. */
++    if (s->rsv_size != 0) {
++        re->address = fdt_be64(s->rsv_addr);
++        re->size = fdt_be64(s->rsv_size);
++        re++;
++        pos += sizeof(struct fdt_reserve_entry);
++    }
++    re->address = 0; /* terminating entry */
+     re->size = 0;
+     pos += sizeof(struct fdt_reserve_entry);
+ 
+@@ -597,6 +666,11 @@
+     FBDevice *fb_dev;
+     
+     s = fdt_init();
++    /* see the reservation block in fdt_output() */
++    if (kernel_size > 0 && kernel_start > RAM_BASE_ADDR) {
++        s->rsv_addr = RAM_BASE_ADDR;
++        s->rsv_size = kernel_start - RAM_BASE_ADDR;
++    }
+ 
+     cur_phandle = 1;
+     
+@@ -623,9 +697,21 @@
+     misa = riscv_cpu_get_misa(m->cpu_state);
+     q = isa_string;
+     q += snprintf(isa_string, sizeof(isa_string), "rv%d", max_xlen);
+-    for(i = 0; i < 26; i++) {
+-        if (misa & (1 << i))
+-            *q++ = 'a' + i;
++    /* Linux requires the canonical ISA order: riscv_early_of_processor_hartid()
++       does strncasecmp(isa, "rv64ima", 7) and rejects the CPU node otherwise.
++       Emitting MISA bits alphabetically yields "rv64acdfim" and the kernel then
++       BUG_ON(!found_boot_cpu) in setup_smp(). */
++    {
++        static const char canonical[] = "imafdqlcbjtpvn";
++        const char *cp;
++        for (cp = canonical; *cp; cp++) {
++            if (misa & (1 << (*cp - 'a')))
++                *q++ = *cp;
++        }
++        for(i = 0; i < 26; i++) {
++            if ((misa & (1 << i)) && !strchr(canonical, 'a' + i))
++                *q++ = 'a' + i;
++        }
+     }
+     *q = '\0';
+     fdt_prop_str(s, "riscv,isa", isa_string);
+@@ -732,7 +818,20 @@
+         fdt_prop_tab_u64(s, "linux,initrd-start", initrd_start);
+         fdt_prop_tab_u64(s, "linux,initrd-end", initrd_start + initrd_size);
+     }
+-    
++
++    /* The machine has no entropy source of any kind: no virtio-rng, and
++       RISC-V has no unprivileged instruction the kernel could seed from.
++       Linux 5.x and later block getrandom() in wait_for_random_bytes()
++       until the CRNG is fully seeded, so on such a guest the first
++       getrandom() caller hangs forever -- glibc startup and qemu-user both
++       do this. Passing a seed here is the standard bootloader contract
++       (early_init_dt_scan_chosen reads it and credits it), and it is what
++       U-Boot and QEMU's own virt machine do. */
++    {
++        uint8_t seed[32];
++        get_random_bytes_host(seed, sizeof(seed));
++        fdt_prop(s, "rng-seed", seed, sizeof(seed));
++    }
+ 
+     fdt_end_node(s); /* chosen */
+     
+@@ -855,6 +954,7 @@
+     s->mem_map->flush_tlb_write_range = riscv_flush_tlb_write_range;
+ 
+     s->cpu_state = riscv_cpu_init(s->mem_map, max_xlen);
++    riscv_cpu_set_get_time(s->cpu_state, riscv_machine_get_time, s);
+     if (!s->cpu_state) {
+         vm_error("unsupported max_xlen=%d\n", max_xlen);
+         /* XXX: should free resources */
+@@ -992,11 +1092,37 @@
+     RISCVMachine *m = (RISCVMachine *)s1;
+     RISCVCPUState *s = m->cpu_state;
+     int64_t delay1;
+-    
++    g_n_sleepcall++;
++    {
++        static uint64_t next_dump;
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        uint64_t now = (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++        if (now >= next_dump) {
++            if (next_dump != 0)
++                fprintf(stderr, "TIMERSTAT t=%llu insn=%llu mtip=%llu timecmp_w=%llu "
++                        "powerdown=%d timecmp=%llu now=%llu "
++                        "kick=%llu vqdone=%llu irq=%llu irqack=%llu\n",
++                        (unsigned long long)now,
++                        (unsigned long long)riscv_cpu_get_cycles(s),
++                        (unsigned long long)g_n_mtip,
++                        (unsigned long long)g_n_timecmp_w,
++                        (int)riscv_cpu_get_power_down(s),
++                        (unsigned long long)m->timecmp,
++                        (unsigned long long)rtc_get_time(m),
++                        (unsigned long long)g_n_vq_kick,
++                        (unsigned long long)g_n_vq_complete,
++                        (unsigned long long)g_n_irq_raise,
++                        (unsigned long long)g_n_irq_ack);
++            next_dump = now + 5000;
++        }
++    }
++
+     /* wait for an event: the only asynchronous event is the RTC timer */
+     if (!(riscv_cpu_get_mip(s) & MIP_MTIP)) {
+         delay1 = m->timecmp - rtc_get_time(m);
+         if (delay1 <= 0) {
++            g_n_mtip++;
+             riscv_cpu_set_mip(s, MIP_MTIP);
+             delay = 0;
+         } else {
+--- a/virtio.c	2019-12-22 02:23:54.000000000 +0900
++++ b/virtio.c	2026-08-03 09:37:44.428382586 +0900
+@@ -51,6 +51,12 @@
+ #define VIRTIO_MMIO_QUEUE_PFN		0x040 /* version 1 only */
+ #define VIRTIO_MMIO_QUEUE_READY		0x044
+ #define VIRTIO_MMIO_QUEUE_NOTIFY	0x050
++/* instrumentation: virtio completion/wakeup accounting */
++uint64_t g_n_vq_kick;      /* guest -> device: queue notify (request issued) */
++uint64_t g_n_vq_complete;  /* device -> guest: descriptor placed in used ring */
++uint64_t g_n_irq_raise;    /* device -> guest: IRQ asserted */
++uint64_t g_n_irq_ack;      /* guest read/ack of INTERRUPT_STATUS */
++
+ #define VIRTIO_MMIO_INTERRUPT_STATUS	0x060
+ #define VIRTIO_MMIO_INTERRUPT_ACK	0x064
+ #define VIRTIO_MMIO_STATUS		0x070
+@@ -93,7 +99,12 @@
+ 
+ #define MAX_QUEUE 8
+ #define MAX_CONFIG_SPACE_SIZE 256
+-#define MAX_QUEUE_NUM 16
++/* Ring size. Linux's v9fs zero-copy path (p9_virtio_zc_request) builds a
++   scatter-gather list with one entry per page of the user buffer, and TinyEMU
++   has no VRING_DESC_F_INDIRECT support, so the ring length is a hard cap on
++   request size. At 16 anything above a tiny msize fails in virtqueue_add_split
++   and v9fs splats. Must stay a power of two: qs->num is used as (num - 1) mask. */
++#define MAX_QUEUE_NUM 256
+ 
+ typedef struct {
+     uint32_t ready; /* 0 or 1 */
+@@ -473,6 +484,9 @@
+     virtio_write32(s, addr, desc_idx);
+     virtio_write32(s, addr + 4, desc_len);
+ 
++    g_n_vq_complete++;
++    if (!(s->int_status & 1))
++        g_n_irq_raise++;
+     s->int_status |= 1;
+     set_irq(s->irq, 1);
+ }
+@@ -517,6 +531,7 @@
+ /* XXX: test if the queue is ready ? */
+ static void queue_notify(VIRTIODevice *s, int queue_idx)
+ {
++    g_n_vq_kick++;
+     QueueState *qs = &s->queue[queue_idx];
+     uint16_t avail_idx;
+     int desc_idx, read_size, write_size;
+@@ -783,6 +798,7 @@
+                 queue_notify(s, val);
+             break;
+         case VIRTIO_MMIO_INTERRUPT_ACK:
++            g_n_irq_ack++;
+             s->int_status &= ~val;
+             if (s->int_status == 0) {
+                 set_irq(s->irq, 0);
